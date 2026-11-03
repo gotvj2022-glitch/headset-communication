@@ -856,20 +856,11 @@ Compare with standard ICAO aviation phraseology:
       try {
         const voiceName = effectiveAiSpeaker === 'Cockpit' ? 'Zephyr' : 'Kore';
         const ttsResponse = await generateContentWithRetry({
-          models: ['gemini-3.8-flash-lite-tts', 'gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.5-flash'],
+          models: ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts'],
           contents: [
             {
               role: 'user',
-              parts: [
-                {
-                  text: assistantReply,
-                  speechMetadata: {
-                    style: effectiveAiSpeaker === 'Cockpit'
-                      ? 'Aviation captain, clear, concise interphone transmission'
-                      : 'Ramp headset operator, crisp and direct',
-                  },
-                },
-              ],
+              parts: [{ text: assistantReply }],
             },
           ],
           config: {
@@ -1144,20 +1135,11 @@ app.post('/api/tts', async (req, res) => {
     const voiceName = speaker === 'Cockpit' ? 'Zephyr' : 'Kore';
 
     const response = await generateContentWithRetry({
-      models: ['gemini-3.8-flash-lite-tts', 'gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.5-flash'],
+      models: ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts'],
       contents: [
         {
           role: 'user',
-          parts: [
-            {
-              text: text,
-              speechMetadata: {
-                style: speaker === 'Cockpit'
-                  ? 'Aviation captain, clear, concise interphone transmission'
-                  : 'Ramp headset operator, crisp and direct',
-              },
-            },
-          ],
+          parts: [{ text: text }],
         },
       ],
       config: {
