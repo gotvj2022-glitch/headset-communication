@@ -59,6 +59,28 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
+  // ===== Số lần phát clip giáo viên =====
+  const MAX_PLAYS = 5; // đổi số này nếu muốn phát nhiều/ít lần hơn
+  const CLIP_END_SECONDS = 9.2; // mốc kết thúc lời chào (giây)
+  const playCountRef = useRef<number>(1);
+  const [playCount, setPlayCount] = useState<number>(1);
+
+  const restartClip = () => {
+    if (audioRef.current) {
+      audioRef.current.currentTime = 0;
+      audioRef.current.play().then(() => setIsPlayingAudio(true)).catch(() => {});
+    }
+    if (videoRef.current) {
+      videoRef.current.currentTime = 0;
+      videoRef.current.play().catch(() => {});
+    }
+  };
+
+  const resetPlayCount = () => {
+    playCountRef.current = 1;
+    setPlayCount(1);
+  };
+
   // Sync internal state when opened
   useEffect(() => {
     if (isOpen) {
@@ -66,6 +88,7 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
       setSelectedMode(currentPracticeMode);
       setSelectedLevel(currentStudentLevel);
       setSelectedRole(currentUserRole);
+      resetPlayCount();
 
       // Attempt autoplay audio and video
       if (videoRef.current) {
@@ -96,31 +119,36 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
     }
   }, [isOpen, currentScenario.id, currentPracticeMode, currentStudentLevel, currentUserRole]);
 
-  // Audio and video event listeners (stops playing clip after ~9s when speaking completes)
+  // Phát clip giáo viên MAX_PLAYS lần rồi dừng
   useEffect(() => {
+    if (!isOpen) return;
     const audio = audioRef.current;
     if (!audio) return;
 
-    const handleTimeUpdate = () => {
-      setAudioProgress(audio.currentTime);
-      // Stop video and audio after ~9s when instructor greeting completes
-      if (audio.currentTime >= 9.2 && !audio.paused) {
+    const finishOneRound = () => {
+      if (playCountRef.current < MAX_PLAYS) {
+        playCountRef.current += 1;
+        setPlayCount(playCountRef.current);
+        restartClip();
+      } else {
         audio.pause();
         setIsPlayingAudio(false);
-        if (videoRef.current) {
-          videoRef.current.pause();
-        }
+        if (videoRef.current) videoRef.current.pause();
+      }
+    };
+
+    const handleTimeUpdate = () => {
+      setAudioProgress(audio.currentTime);
+      if (audio.currentTime >= CLIP_END_SECONDS && !audio.paused) {
+        finishOneRound();
       }
     };
     const handleLoadedMetadata = () => {
       setAudioDuration(audio.duration || 0);
     };
     const handleEnded = () => {
-      setIsPlayingAudio(false);
-      setAudioProgress(audio.duration || 0);
-      if (videoRef.current) {
-        videoRef.current.pause();
-      }
+      // trường hợp file âm thanh ngắn hơn CLIP_END_SECONDS
+      finishOneRound();
     };
 
     audio.addEventListener('timeupdate', handleTimeUpdate);
@@ -132,7 +160,7 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
       audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
       audio.removeEventListener('ended', handleEnded);
     };
-  }, []);
+  }, [isOpen]);
 
   const togglePlayAudio = () => {
     if (!audioRef.current) return;
@@ -143,6 +171,7 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
     } else {
       if (videoRef.current) {
         if (audioRef.current.currentTime >= 9.0) {
+          resetPlayCount();
           videoRef.current.currentTime = 0;
           audioRef.current.currentTime = 0;
         }
@@ -154,6 +183,7 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
 
   const replayAudio = () => {
     if (!audioRef.current) return;
+    resetPlayCount();
     audioRef.current.currentTime = 0;
     if (videoRef.current) {
       videoRef.current.currentTime = 0;
@@ -265,7 +295,7 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
                 <div className="absolute top-2.5 left-2.5 px-2.5 py-1 rounded-full bg-slate-950/70 backdrop-blur-md border border-white/20 text-white flex items-center gap-1.5">
                   <Volume2 className={`w-3.5 h-3.5 text-amber-400 ${isPlayingAudio ? 'animate-pulse' : ''}`} />
                   <span className="text-[10px] font-mono font-bold">
-                    {isPlayingAudio ? 'ĐANG PHÁT LỜI CHÀO...' : 'TẠM DỪNG'}
+                    {isPlayingAudio ? `ĐANG PHÁT LỜI CHÀO... (${playCount}/${MAX_PLAYS})` : 'TẠM DỪNG'}
                   </span>
                 </div>
 
