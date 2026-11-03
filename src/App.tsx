@@ -187,6 +187,7 @@ export default function App() {
   const [isEvaluating, setIsEvaluating] = useState<boolean>(false);
   const [isAiSpeaking, setIsAiSpeaking] = useState<boolean>(false);
   const [presetInputText, setPresetInputText] = useState<string>('');
+  const [lastTranscribedText, setLastTranscribedText] = useState<string>('');
   const [pendingRetryTurn, setPendingRetryTurn] = useState<boolean>(false);
 
   // Client-side TTS cache: Map<`${speaker}:${text}`, { audioBase64: string | null; useBrowserFallback: boolean }>
@@ -259,6 +260,26 @@ export default function App() {
       currentExpectedTurn = currentPair.cockpitTurn;
     }
   }
+
+  // Direct audio or fallback voice playback with microphone lock (isAiSpeaking)
+  const playDirectAudioOrVoice = async (text: string, speaker: 'Cockpit' | 'Ground', base64Audio?: string | null) => {
+    if (!voiceEnabled || !text) return;
+    setIsAiSpeaking(true);
+    try {
+      const cacheKey = `${speaker}:${text}`;
+      if (base64Audio) {
+        ttsAudioCache.current.set(cacheKey, { audioBase64: base64Audio, useBrowserFallback: false });
+        await playWavAudio(base64Audio);
+        return;
+      }
+      await playAiVoice(text, speaker);
+    } catch (e) {
+      console.warn('Audio playback notice:', e);
+      await speakWithBrowserTts(text, speaker);
+    } finally {
+      setIsAiSpeaking(false);
+    }
+  };
 
   // Trigger AI voice playback with cache and microphone lock (isAiSpeaking)
   const playAiVoice = async (text: string, speaker: 'Cockpit' | 'Ground') => {
@@ -346,6 +367,7 @@ export default function App() {
   }, [selectedScenario, userRole, practiceMode]);
 
   // Handle student transmission (voice or text)
+  // Handle student transmission (voice or text) via VIAA-GOT pipeline
   const handleStudentTransmit = async (spokenText: string, audioBase64?: string, mimeType?: string) => {
     const trimmedSpoken = spokenText.trim();
     if (!trimmedSpoken && !audioBase64) return;
@@ -376,79 +398,74 @@ export default function App() {
 
     let evaluation: EvaluationResult | undefined = undefined;
     let evalLatencyMs = 0;
-    let ttsLatencyMs = 0;
 
     try {
-      // 1. In scenario/exam mode, prospective AI reply text is already known from scenario
+      // 1. Determine expectedText, aiReplyText, difficulty, history per VIAA-GOT PART 2
+      const expectedText = currentExpectedTurn ? currentExpectedTurn.text : '';
+
+      let aiReplyText = '';
       const activePair = (practiceMode === 'scenario' || practiceMode === 'exam')
         ? selectedScenario.dialoguePairs.find((p) => p.pairIndex === currentPairIndex)
         : null;
-      const prospectiveAiTurn = (activePair && activePair.expectedInitiator === studentRole)
-        ? (aiRole === 'Cockpit' ? activePair.cockpitTurn : activePair.groundTurn)
-        : null;
+      const studentIsInitiator = activePair ? activePair.expectedInitiator === studentRole : false;
 
-      // Start evaluation request
+      if (practiceMode === 'scenario' || practiceMode === 'exam') {
+        if (studentIsInitiator && activePair) {
+          const aiTurn = aiRole === 'Cockpit' ? activePair.cockpitTurn : activePair.groundTurn;
+          aiReplyText = aiTurn?.text || '';
+        } else if (activePair) {
+          const nextPair = selectedScenario.dialoguePairs.find((p) => p.pairIndex === currentPairIndex + 1);
+          if (nextPair && nextPair.expectedInitiator === aiRole) {
+            const nextAiTurn = aiRole === 'Cockpit' ? nextPair.cockpitTurn : nextPair.groundTurn;
+            aiReplyText = nextAiTurn?.text || '';
+          }
+        }
+      }
+
+      const difficulty = studentLevel === 'beginner' ? 'easy' : studentLevel === 'advanced' ? 'hard' : 'normal';
+
+      const history = messages.map((m) => ({
+        sender: m.isUser ? 'user' : 'assistant',
+        text: m.text,
+      }));
+
+      // 2. Single POST /api/evaluate-speech (inline TTS included)
       console.time('Gemini evaluate');
       const evalStart = Date.now();
-      const evalPromise = fetch('/api/evaluate-speech', {
+      const evalResponse = await fetch('/api/evaluate-speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          audioBase64,
-          mimeType,
-          transcript: trimmedSpoken,
-          expectedText: currentExpectedTurn ? currentExpectedTurn.text : trimmedSpoken,
-          expectedPhrase: currentExpectedTurn ? currentExpectedTurn.text : trimmedSpoken,
-          currentPairIndex,
-          role: studentRole,
-          studentLevel,
+          audio: audioBase64 || '',
+          mimeType: mimeType || 'audio/webm',
+          typedText: trimmedSpoken,
+          history,
+          expectedText,
+          aiReplyText,
+          aiSpeaker: aiRole,
+          difficulty,
           practiceMode,
           scenarioTitle: selectedScenario.title,
-          context: selectedScenario.conditions,
-          // Only call local LLM when student typed text (no audio)
+          userRole: studentRole,
+          voiceEnabled,
+          maxOutputTokens: 650,
+          currentPairIndex,
+          studentLevel,
           localAiConfig: audioBase64 ? undefined : localAiConfig,
         }),
       });
 
-      // Parallel speculative TTS prefetch for the prospective AI reply
-      let ttsPromise: Promise<any> | null = null;
-      let ttsStart = 0;
-      if (voiceEnabled && prospectiveAiTurn?.text) {
-        const cacheKey = `${aiRole}:${prospectiveAiTurn.text}`;
-        if (!ttsAudioCache.current.has(cacheKey)) {
-          console.time('TTS');
-          ttsStart = Date.now();
-          ttsPromise = fetch('/api/tts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: prospectiveAiTurn.text, speaker: aiRole }),
-          })
-            .then((r) => (r.ok ? r.json() : null))
-            .then((data) => {
-              if (data) {
-                ttsAudioCache.current.set(cacheKey, {
-                  audioBase64: data.audioBase64 || null,
-                  useBrowserFallback: !!data.useBrowserFallback,
-                });
-              }
-              console.timeEnd('TTS');
-              return data;
-            })
-            .catch(() => {
-              console.timeEnd('TTS');
-              return null;
-            });
-        }
-      }
-
-      const [evalResponse] = await Promise.all([evalPromise, ttsPromise || Promise.resolve(null)]);
       evalLatencyMs = Date.now() - evalStart;
       console.timeEnd('Gemini evaluate');
-      ttsLatencyMs = ttsStart ? Date.now() - ttsStart : 0;
 
-      evaluation = await evalResponse.json();
+      if (evalResponse.ok) {
+        evaluation = await evalResponse.json();
+      }
 
       if (evaluation) {
+        if (evaluation.transcribedText) {
+          setLastTranscribedText(evaluation.transcribedText);
+        }
         setMessages((prev) =>
           prev.map((m) =>
             m.id === userMsgId
@@ -467,11 +484,11 @@ export default function App() {
           mimeType: mimeType || 'audio/webm',
           latencies: {
             evaluateMs: evalLatencyMs,
-            ttsMs: ttsLatencyMs,
+            ttsMs: 0,
             totalMs: Date.now() - totalStart,
           },
-          rawTranscribedText: evaluation.transcribedText || trimmedSpoken,
-          expectedPhrase: currentExpectedTurn ? currentExpectedTurn.text : '',
+          rawTranscribedText: evaluation.rawTranscription || evaluation.transcribedText || trimmedSpoken,
+          expectedPhrase: expectedText,
           similarity: evaluation.similarity ?? 0,
           matchedStep: evaluation.matchedStep,
           currentPairIndex,
@@ -491,20 +508,32 @@ export default function App() {
       console.timeEnd('total');
     }
 
-    // Check Student Level Requirement:
-    // Mức 1 Cơ bản: > 30% | Mức 2 Tiêu chuẩn: > 50% | Mức 3 Đầu ra: > 70%
-    const threshold = getPassingThreshold(studentLevel);
-    const passedThisTurn = evaluation
-      ? (evaluation.isPassed !== undefined ? evaluation.isPassed : evaluation.overallScore > threshold)
-      : true;
+    // 3. Pass/Fail check per VIAA-GOT PART 2
+    const passedThisTurn = evaluation ? !!evaluation.isPassed : true;
 
     if (!passedThisTurn) {
-      // Block advancement! Require retry of the current turn
+      // Failed: require retry of the current turn
       setPendingRetryTurn(true);
+
+      // Speak repeat prompt if assistantReply is provided
+      if (evaluation?.assistantReply) {
+        const repeatText = evaluation.assistantReply;
+        const aiRepeatMsg: ChatMessage = {
+          id: `msg-${Date.now()}-ai-repeat`,
+          sender: aiRole,
+          isUser: false,
+          text: repeatText,
+          vietnamese: 'Vui lòng nhắc lại khẩu lệnh tiêu chuẩn.',
+          timestamp: Date.now(),
+          pairIndex: currentPairIndex,
+        };
+        setMessages((prev) => [...prev, aiRepeatMsg]);
+        await playDirectAudioOrVoice(repeatText, aiRole, evaluation.replyAudioBase64);
+      }
       return;
     }
 
-    // Passed turn (> threshold)! Advance to next turn / action
+    // Passed turn! Clear retry flag and continue
     setPendingRetryTurn(false);
 
     // Scenario / Exam Mode handling
@@ -515,7 +544,7 @@ export default function App() {
       const studentIsInitiator = activePair.expectedInitiator === studentRole;
 
       if (studentIsInitiator) {
-        // AI needs to reply to finish this pair
+        // AI replies to complete this pair
         const aiTurn = aiRole === 'Cockpit' ? activePair.cockpitTurn : activePair.groundTurn;
         setIsAiThinking(true);
 
@@ -532,19 +561,19 @@ export default function App() {
             pairIndex: currentPairIndex,
           };
           setMessages((prev) => [...prev, aiMsg]);
-          await playAiVoice(aiTurn.text, aiRole);
+          await playDirectAudioOrVoice(aiTurn.text, aiRole, evaluation?.replyAudioBase64);
 
           if (currentPairIndex < selectedScenario.dialoguePairs.length) {
             advanceToNextPair(currentPairIndex + 1);
           } else {
-            // Completed all 10 pairs! Show summary/transcript
+            // Completed all 10 pairs! Show summary modal
             setTimeout(() => {
               setIsSummaryModalOpen(true);
             }, 1000);
           }
-        }, 700);
+        }, 350);
       } else {
-        // Student answered AI's initiator turn -> Pair finished!
+        // Student answered AI's opening turn -> Pair finished!
         if (currentPairIndex < selectedScenario.dialoguePairs.length) {
           advanceToNextPair(currentPairIndex + 1);
         } else {
@@ -554,42 +583,23 @@ export default function App() {
         }
       }
     } else {
-      // Free Dialogue Mode
+      // Free Dialogue Mode: Instant AI response using assistantReply from evaluate-speech
       setIsAiThinking(true);
-      try {
-        const chatResponse = await fetch('/api/chat-turn', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            history: messages.slice(-6),
-            studentMessage: evaluation?.transcribedText || trimmedSpoken,
-            aiRole,
-            scenarioTopic: selectedScenario.title,
-            aircraft: selectedScenario.aircraft,
-            flightNumber: selectedScenario.flight,
-            practiceMode: 'free',
-          }),
-        });
-
-        const chatData = await chatResponse.json();
+      const freeReply = evaluation?.assistantReply || 'Roger. Message understood. Standing by.';
+      setTimeout(async () => {
         setIsAiThinking(false);
-
         const aiMsg: ChatMessage = {
           id: `msg-${Date.now()}-ai`,
           sender: aiRole,
           isUser: false,
-          text: chatData.reply || 'Roger. Message understood. Standing by.',
-          vietnamese: chatData.vietnameseTranslation || '',
-          prowords: chatData.prowordsUsed || [],
+          text: freeReply,
+          vietnamese: 'Đã nhận rõ. Sẵn sàng theo quy trình.',
+          prowords: ['ROGER'],
           timestamp: Date.now(),
         };
-
         setMessages((prev) => [...prev, aiMsg]);
-        await playAiVoice(aiMsg.text, aiRole);
-      } catch (err) {
-        console.log('[Chat Generation] Dialogue notice:', err);
-        setIsAiThinking(false);
-      }
+        await playDirectAudioOrVoice(freeReply, aiRole, evaluation?.replyAudioBase64);
+      }, 250);
     }
   };
 
@@ -824,6 +834,8 @@ export default function App() {
           userRole={userRole}
           presetText={presetInputText}
           pendingRetryTurn={pendingRetryTurn}
+          lastTranscribedText={lastTranscribedText}
+          isEvaluating={isEvaluating}
         />
       </main>
 

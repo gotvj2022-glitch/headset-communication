@@ -30,6 +30,13 @@ export interface EvaluationResult {
   similarity?: number;
   currentPairIndex?: number;
   modelUsed?: string;
+  rawTranscription?: string;
+  assistantReply?: string;
+  replyAudioBase64?: string;
+  grammarScore?: number;
+  vocabularyScore?: number;
+  templateScore?: number;
+  difficulty?: string;
 }
 
 export function getPassingThreshold(level: StudentLevel): number {

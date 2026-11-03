@@ -362,26 +362,26 @@ export const DialogueChat: React.FC<DialogueChatProps> = ({
                     >
                       {/* Primary Radio English Phrase or Active Processing Indicator */}
                       <div className="flex items-start justify-between gap-3">
-                        {isUser && !msg.evaluation && (isEvaluating || msg.text.includes('Đang nhận diện')) ? (
+                        {isUser && !msg.evaluation && (isEvaluating || msg.text.includes('Đang nhận diện') || msg.text.includes('Đang gửi âm thanh')) ? (
                           <div className="flex items-center gap-2.5 py-1 text-red-700 animate-pulse">
                             <div className="w-4 h-4 border-2 border-red-600 border-t-transparent rounded-full animate-spin shrink-0" />
                             <div className="flex flex-col">
                               <span className="text-xs sm:text-sm font-bold font-mono">
-                                {msg.text.includes('Đang nhận diện') ? '🎙️ Đang giải mã âm thanh & khẩu lệnh...' : msg.text}
+                                🎙️ Đang gửi âm thanh tới LLM xử lý nhanh nhất...
                               </span>
                               <span className="text-[10px] text-slate-500 font-sans">
-                                AI đang đối chiếu âm học song song chuẩn ICAO VIAA...
+                                LLM Gemini siêu nhanh đang chuyển đổi giọng đọc thành văn bản (Speech-to-Text)...
                               </span>
                             </div>
                           </div>
                         ) : isUser && msg.evaluation ? (
                           <div className="flex flex-col gap-2 w-full">
-                            {/* Line 1: What was heard (transcribedText verbatim) */}
-                            <div className="flex items-start gap-2">
-                              <span className="text-[10px] font-mono font-bold text-slate-600 uppercase tracking-wider shrink-0 bg-slate-200/90 px-1.5 py-0.5 rounded mt-0.5">
-                                Nghe được
+                            {/* Line 1: What was heard (transcribedText verbatim from LLM) */}
+                            <div className="flex items-start gap-2 bg-slate-900/5 p-2 rounded-xl border border-slate-200/80">
+                              <span className="text-[10px] font-mono font-bold text-white bg-slate-800 uppercase tracking-wider shrink-0 px-2 py-0.5 rounded shadow-2xs mt-0.5">
+                                LLM Nhận Dạng
                               </span>
-                              <p className="text-sm sm:text-base font-bold tracking-wide font-mono leading-relaxed select-text text-slate-900">
+                              <p className="text-sm sm:text-base font-bold tracking-wide font-mono leading-relaxed select-text text-slate-950">
                                 "{msg.evaluation.transcribedText || msg.text}"
                               </p>
                             </div>

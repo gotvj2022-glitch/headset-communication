@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Send, Radio, AlertCircle, Globe, Sparkles, Eye, EyeOff } from 'lucide-react';
+import { Mic, MicOff, Send, Radio, AlertCircle, Sparkles } from 'lucide-react';
 import { playRadioClick } from '../utils/audioPlayer';
 
 interface AudioInputControlsProps {
@@ -9,6 +9,8 @@ interface AudioInputControlsProps {
   userRole: 'Ground' | 'Cockpit';
   presetText?: string;
   pendingRetryTurn?: boolean;
+  lastTranscribedText?: string;
+  isEvaluating?: boolean;
 }
 
 export const AudioInputControls: React.FC<AudioInputControlsProps> = ({
@@ -18,6 +20,8 @@ export const AudioInputControls: React.FC<AudioInputControlsProps> = ({
   userRole,
   presetText = '',
   pendingRetryTurn = false,
+  lastTranscribedText = '',
+  isEvaluating = false,
 }) => {
   const [isRecording, setIsRecording] = useState(false);
   const [isPackaging, setIsPackaging] = useState(false);
@@ -25,26 +29,27 @@ export const AudioInputControls: React.FC<AudioInputControlsProps> = ({
   const [textInput, setTextInput] = useState('');
   const [audioLevel, setAudioLevel] = useState(0);
   const [hasMicPermission, setHasMicPermission] = useState<boolean | null>(null);
-  const [speechLanguage, setSpeechLanguage] = useState<'en-US' | 'vi-VN'>('en-US');
-  const [previewEnabled, setPreviewEnabled] = useState<boolean>(false);
-  const [livePreviewText, setLivePreviewText] = useState<string>('');
   const [audioWarning, setAudioWarning] = useState<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const recognitionRef = useRef<any>(null);
   const isRecordingRef = useRef<boolean>(false);
   const timerRef = useRef<any>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<any>(null);
-  const recordedMimeTypeRef = useRef<string>('audio/webm;codecs=opus');
 
   useEffect(() => {
     if (presetText) {
       setTextInput(presetText);
     }
   }, [presetText]);
+
+  useEffect(() => {
+    if (lastTranscribedText) {
+      setTextInput(lastTranscribedText);
+    }
+  }, [lastTranscribedText]);
 
   useEffect(() => {
     return () => {
@@ -57,21 +62,14 @@ export const AudioInputControls: React.FC<AudioInputControlsProps> = ({
       setAudioWarning(null);
       playRadioClick('open');
       audioChunksRef.current = [];
-      setLivePreviewText('');
       setRecordSeconds(0);
       isRecordingRef.current = true;
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
+      // 2. Start recording exactly per VIAA-GOT spec: no extra constraints
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       setHasMicPermission(true);
 
-      // Audio visualizer setup
+      // Audio visualizer setup (AnalyserNode only reads the stream)
       try {
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
         if (AudioCtx) {
@@ -99,89 +97,32 @@ export const AudioInputControls: React.FC<AudioInputControlsProps> = ({
         console.warn('AudioContext visualization setup error:', audioCtxErr);
       }
 
-      // Detect best supported audio mime type with priority on audio/webm;codecs=opus
-      let chosenMime = 'audio/webm;codecs=opus';
-      if (typeof MediaRecorder !== 'undefined') {
-        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-          chosenMime = 'audio/webm;codecs=opus';
-        } else if (MediaRecorder.isTypeSupported('audio/webm')) {
-          chosenMime = 'audio/webm';
-        } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-          chosenMime = 'audio/mp4';
-        } else if (MediaRecorder.isTypeSupported('audio/ogg')) {
-          chosenMime = 'audio/ogg';
-        }
-      }
-      recordedMimeTypeRef.current = chosenMime;
+      let mime = '';
+      if (MediaRecorder.isTypeSupported('audio/webm')) mime = 'audio/webm';
+      else if (MediaRecorder.isTypeSupported('audio/ogg')) mime = 'audio/ogg';
+      else if (MediaRecorder.isTypeSupported('audio/mp4')) mime = 'audio/mp4';
 
-      const recorder = new MediaRecorder(stream, chosenMime ? { mimeType: chosenMime } : undefined);
+      const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       mediaRecorderRef.current = recorder;
 
-      recorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) {
-          audioChunksRef.current.push(e.data);
+      recorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) {
+          audioChunksRef.current.push(ev.data);
         }
       };
 
-      recorder.start(100);
+      recorder.start(250); // 250 ms time slice
       setIsRecording(true);
 
       timerRef.current = setInterval(() => {
         setRecordSeconds((s) => s + 1);
       }, 1000);
-
-      // ONLY start Web Speech API if Preview is toggled ON (default is OFF)
-      // Note: Live preview text is strictly on-screen only and is NEVER sent to the server.
-      if (previewEnabled) {
-        const SpeechRecognition =
-          (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-
-        if (SpeechRecognition) {
-          try {
-            const recognition = new SpeechRecognition();
-            recognition.continuous = true;
-            recognition.interimResults = true;
-            recognition.lang = speechLanguage;
-            recognition.maxAlternatives = 1;
-
-            recognition.onresult = (event: any) => {
-              let textAccumulator = '';
-              for (let i = event.resultIndex; i < event.results.length; ++i) {
-                const res = event.results[i];
-                const chunk = res[0]?.transcript || '';
-                textAccumulator += chunk;
-              }
-              if (textAccumulator.trim()) {
-                setLivePreviewText(textAccumulator.trim());
-              }
-            };
-
-            recognition.onerror = (event: any) => {
-              console.warn('Speech recognition preview status:', event.error);
-            };
-
-            recognition.onend = () => {
-              if (isRecordingRef.current && previewEnabled) {
-                try {
-                  recognition.start();
-                } catch {
-                  // Ignore
-                }
-              }
-            };
-
-            recognition.start();
-            recognitionRef.current = recognition;
-          } catch (recognitionInitErr) {
-            console.warn('SpeechRecognition initialization error:', recognitionInitErr);
-          }
-        }
-      }
     } catch (err) {
       console.error('Error starting audio recording:', err);
       setHasMicPermission(false);
       setIsRecording(false);
       isRecordingRef.current = false;
+      setAudioWarning('Microphone access denied. Please grant microphone permission in your browser.');
     }
   };
 
@@ -191,54 +132,49 @@ export const AudioInputControls: React.FC<AudioInputControlsProps> = ({
     setIsRecording(false);
     setIsPackaging(true);
 
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (e) {}
-    }
-
     if (timerRef.current) clearInterval(timerRef.current);
     if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
     if (audioContextRef.current) audioContextRef.current.close().catch(() => {});
 
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state !== 'inactive') {
-      recorder.onstop = async () => {
+      recorder.onstop = () => {
         try {
-          const audioBlob = new Blob(audioChunksRef.current, {
-            type: recordedMimeTypeRef.current || 'audio/webm;codecs=opus',
-          });
+          recorder.stream.getTracks().forEach((t) => t.stop());
 
-          // Check if audio blob is smaller than 2 KB (2048 bytes)
-          if (audioBlob.size < 2048) {
+          const chunks = audioChunksRef.current;
+          if (chunks.length === 0) {
             setIsPackaging(false);
-            setAudioWarning('Không thu được âm thanh, vui lòng nói lại');
-            setLivePreviewText('');
+            setAudioWarning('No speech data captured. Please speak closer to your microphone.');
+            return;
+          }
+
+          const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+          if (blob.size < 100) {
+            setIsPackaging(false);
+            setAudioWarning('No speech data captured. Please speak closer to your microphone.');
             return;
           }
 
           const reader = new FileReader();
           reader.onloadend = () => {
-            const base64Audio = (reader.result as string) || '';
+            const resultStr = (reader.result as string) || '';
+            const base64 = resultStr.split(',')[1] || '';
             setIsPackaging(false);
-            setLivePreviewText('');
-            // Call onTransmit('', base64Audio, mimeType) - send audio only, no browser transcript
-            onTransmit('', base64Audio, recordedMimeTypeRef.current || 'audio/webm;codecs=opus');
-            setTextInput('');
+            // Transmit audio without browser transcript
+            onTransmit('', base64, recorder.mimeType || 'audio/webm');
           };
-          reader.readAsDataURL(audioBlob);
+          reader.readAsDataURL(blob);
         } catch (packErr) {
           console.warn('Audio packaging error:', packErr);
           setIsPackaging(false);
-          setAudioWarning('Không thu được âm thanh, vui lòng nói lại');
-        } finally {
-          recorder.stream.getTracks().forEach((track) => track.stop());
+          setAudioWarning('No speech data captured. Please speak closer to your microphone.');
         }
       };
       recorder.stop();
     } else {
       setIsPackaging(false);
-      setAudioWarning('Không thu được âm thanh, vui lòng nói lại');
+      setAudioWarning('No speech data captured. Please speak closer to your microphone.');
     }
   };
 
@@ -248,11 +184,6 @@ export const AudioInputControls: React.FC<AudioInputControlsProps> = ({
     setIsPackaging(false);
     if (timerRef.current) clearInterval(timerRef.current);
     if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (e) {}
-    }
     if (audioContextRef.current) audioContextRef.current.close().catch(() => {});
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stream.getTracks().forEach((t) => t.stop());
@@ -265,7 +196,6 @@ export const AudioInputControls: React.FC<AudioInputControlsProps> = ({
     playRadioClick('close');
     onTransmit(textInput.trim());
     setTextInput('');
-    setLivePreviewText('');
   };
 
   const formatTimer = (sec: number) => {
@@ -292,6 +222,14 @@ export const AudioInputControls: React.FC<AudioInputControlsProps> = ({
           <div className="flex items-center gap-2 p-2.5 rounded-lg bg-red-100 border border-red-300 text-xs text-red-800 animate-fadeIn">
             <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
             <span className="font-semibold">{audioWarning}</span>
+          </div>
+        )}
+
+        {/* Real-time Processing Indicator */}
+        {isEvaluating && (
+          <div className="flex items-center gap-2 p-2.5 rounded-xl bg-amber-50 border border-amber-300 text-xs text-amber-900 shadow-2xs animate-pulse">
+            <Sparkles className="w-4 h-4 text-amber-600 animate-spin shrink-0" />
+            <span className="font-semibold">VIAA-GOT: Đang xử lý âm thanh & đánh giá khẩu lệnh...</span>
           </div>
         )}
 
@@ -330,17 +268,7 @@ export const AudioInputControls: React.FC<AudioInputControlsProps> = ({
           </div>
         )}
 
-        {/* On-screen only preview text when Preview toggle is ON */}
-        {previewEnabled && isRecording && livePreviewText && (
-          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-100 border border-slate-300 text-xs text-slate-700 animate-fadeIn">
-            <Eye className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-            <span className="text-slate-500 font-semibold">Preview màn hình:</span>
-            <span className="font-mono text-slate-800 italic truncate">"{livePreviewText}"</span>
-            <span className="text-[10px] text-slate-400 ml-auto shrink-0">(chỉ hiển thị xem trước, không gửi lên server)</span>
-          </div>
-        )}
-
-        {/* Action Controls: Toggle Mic + Text Input + Language Switch + Preview Toggle */}
+        {/* Action Controls: Toggle Mic + Text Input */}
         <div className="flex items-center gap-2 sm:gap-3">
           {/* Main Push-To-Toggle Recording Button */}
           <button
@@ -389,42 +317,6 @@ export const AudioInputControls: React.FC<AudioInputControlsProps> = ({
             )}
           </button>
 
-          {/* Small Preview Toggle (Default OFF, displays live text on-screen only, never sent to server) */}
-          <button
-            type="button"
-            onClick={() => setPreviewEnabled((prev) => !prev)}
-            disabled={isRecording || disabled}
-            title={`Xem trước giọng nói trên màn hình: ${previewEnabled ? 'Đang BẬT' : 'Đang TẮT'} (chỉ xem trên màn hình, không gửi văn bản lên server)`}
-            className={`flex items-center gap-1.5 px-2.5 py-2.5 sm:py-3 rounded-xl border text-xs font-semibold transition-colors shrink-0 shadow-2xs cursor-pointer ${
-              previewEnabled
-                ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
-                : 'bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100'
-            }`}
-          >
-            {previewEnabled ? (
-              <Eye className="w-3.5 h-3.5 text-emerald-600" />
-            ) : (
-              <EyeOff className="w-3.5 h-3.5 text-slate-400" />
-            )}
-            <span className="font-mono text-[11px] font-bold">
-              Preview: {previewEnabled ? 'ON' : 'OFF'}
-            </span>
-          </button>
-
-          {/* Language selector toggle (EN for Aviation standard, VI for Vietnamese context) */}
-          <button
-            type="button"
-            onClick={() => setSpeechLanguage((lang) => (lang === 'en-US' ? 'vi-VN' : 'en-US'))}
-            disabled={isRecording || disabled}
-            title={`Ngôn ngữ nhận diện giọng nói preview: ${speechLanguage === 'en-US' ? 'Tiếng Anh Hàng không (en-US)' : 'Tiếng Việt (vi-VN)'}`}
-            className="flex items-center gap-1 px-2.5 py-2.5 sm:py-3 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-700 transition-colors shrink-0 shadow-2xs"
-          >
-            <Globe className="w-3.5 h-3.5 text-slate-500" />
-            <span className="font-mono font-bold text-[11px] text-red-600">
-              {speechLanguage === 'en-US' ? 'EN' : 'VI'}
-            </span>
-          </button>
-
           {/* Text input fallback / edit bar */}
           <div className="flex-1 relative flex items-center">
             <input
@@ -440,7 +332,7 @@ export const AudioInputControls: React.FC<AudioInputControlsProps> = ({
               disabled={disabled || isRecording}
               placeholder={
                 isRecording
-                  ? 'Đang thu âm luồng âm thanh Opus...'
+                  ? 'Đang thu âm luồng âm thanh...'
                   : `Nhập khẩu lệnh ICAO (${userRole === 'Ground' ? 'Ground' : 'Cockpit'})...`
               }
               className="w-full bg-slate-50 border border-slate-300 focus:border-red-500 focus:bg-white rounded-xl px-3 sm:px-4 py-2.5 sm:py-3 text-xs sm:text-sm text-slate-900 placeholder-slate-400 font-mono focus:outline-none pr-10 transition-colors shadow-2xs"
