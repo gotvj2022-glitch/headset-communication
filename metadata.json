@@ -1,0 +1,6 @@
+{
+  "name": "AeroComms VIAA - Victoria Aviation Academy Headset Communication",
+  "description": "Hệ thống luyện tập và kiểm tra đàm thoại hàng không mặt đất và tổ bay theo chuẩn VIAA & ICAO tích hợp Voice AI và chấm điểm phát âm 3 cấp độ.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
