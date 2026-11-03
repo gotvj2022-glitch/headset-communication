@@ -67,7 +67,11 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
       setSelectedLevel(currentStudentLevel);
       setSelectedRole(currentUserRole);
 
-      // Attempt autoplay audio
+      // Attempt autoplay audio and video
+      if (videoRef.current) {
+        videoRef.current.currentTime = 0;
+        videoRef.current.play().catch(() => {});
+      }
       if (audioRef.current) {
         audioRef.current.currentTime = 0;
         const playPromise = audioRef.current.play();
@@ -81,21 +85,32 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
         }
       }
     } else {
-      // Pause audio when modal is closed
+      // Pause audio and video when modal is closed
       if (audioRef.current) {
         audioRef.current.pause();
         setIsPlayingAudio(false);
       }
+      if (videoRef.current) {
+        videoRef.current.pause();
+      }
     }
   }, [isOpen, currentScenario.id, currentPracticeMode, currentStudentLevel, currentUserRole]);
 
-  // Audio event listeners
+  // Audio and video event listeners (stops playing clip after ~9s when speaking completes)
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
     const handleTimeUpdate = () => {
       setAudioProgress(audio.currentTime);
+      // Stop video and audio after ~9s when instructor greeting completes
+      if (audio.currentTime >= 9.2 && !audio.paused) {
+        audio.pause();
+        setIsPlayingAudio(false);
+        if (videoRef.current) {
+          videoRef.current.pause();
+        }
+      }
     };
     const handleLoadedMetadata = () => {
       setAudioDuration(audio.duration || 0);
@@ -103,6 +118,9 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
     const handleEnded = () => {
       setIsPlayingAudio(false);
       setAudioProgress(audio.duration || 0);
+      if (videoRef.current) {
+        videoRef.current.pause();
+      }
     };
 
     audio.addEventListener('timeupdate', handleTimeUpdate);
@@ -121,7 +139,15 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
     if (isPlayingAudio) {
       audioRef.current.pause();
       setIsPlayingAudio(false);
+      if (videoRef.current) videoRef.current.pause();
     } else {
+      if (videoRef.current) {
+        if (audioRef.current.currentTime >= 9.0) {
+          videoRef.current.currentTime = 0;
+          audioRef.current.currentTime = 0;
+        }
+        videoRef.current.play().catch(() => {});
+      }
       audioRef.current.play().then(() => setIsPlayingAudio(true)).catch(() => {});
     }
   };
@@ -129,6 +155,10 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
   const replayAudio = () => {
     if (!audioRef.current) return;
     audioRef.current.currentTime = 0;
+    if (videoRef.current) {
+      videoRef.current.currentTime = 0;
+      videoRef.current.play().catch(() => {});
+    }
     audioRef.current.play().then(() => setIsPlayingAudio(true)).catch(() => {});
   };
 
@@ -226,7 +256,6 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
                   ref={videoRef}
                   src="/assets/aistudio/instructor_aef09d80.mp4"
                   autoPlay
-                  loop
                   muted
                   playsInline
                   className="w-full h-full object-cover object-center"
@@ -319,26 +348,23 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
           {/* RIGHT COLUMN: 4 Option Groups (7 cols) */}
           <div className="lg:col-span-7 p-5 sm:p-6 flex flex-col gap-5 bg-white">
             
-            {/* 1. CHẾ ĐỘ HUẤN LUYỆN & THI */}
+            {/* 1. CHẾ ĐỘ HUẤN LUYỆN */}
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-xs font-black uppercase text-slate-900 tracking-wider flex items-center gap-1.5">
-                  <span className="w-5 h-5 rounded-full bg-red-600 text-white flex items-center justify-center text-[10px] font-bold">
-                    1
-                  </span>
-                  Chế độ huấn luyện & thi
-                </label>
-                <span className="text-[10px] text-slate-500">Chọn 1 trong 3 phương thức</span>
-              </div>
+              <label className="text-xs font-black uppercase text-slate-900 tracking-wider flex items-center gap-1.5 mb-2">
+                <span className="w-5 h-5 rounded-full bg-red-600 text-white flex items-center justify-center text-[10px] font-bold">
+                  1
+                </span>
+                Chế độ huấn luyện
+              </label>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 {/* Kịch bản chuẩn */}
                 <button
                   type="button"
                   onClick={() => setSelectedMode('scenario')}
-                  className={`p-3 rounded-2xl border text-left transition-all cursor-pointer relative flex flex-col justify-between ${
+                  className={`p-3 rounded-2xl border text-center transition-all cursor-pointer relative flex items-center justify-center ${
                     selectedMode === 'scenario'
-                      ? 'border-red-600 bg-red-50/50 ring-2 ring-red-500/30 shadow-xs'
+                      ? 'border-red-600 bg-red-50/60 ring-2 ring-red-500/30 shadow-xs'
                       : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50'
                   }`}
                 >
@@ -347,24 +373,16 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
                       <CheckCircle2 className="w-4 h-4 fill-red-100" />
                     </div>
                   )}
-                  <div>
-                    <span className="font-bold text-xs text-slate-900 block mb-0.5">Kịch bản chuẩn</span>
-                    <p className="text-[11px] text-slate-500 leading-snug">
-                      10 cặp đối đáp theo quy trình chuẩn SOP
-                    </p>
-                  </div>
-                  <span className="text-[9px] font-mono text-red-700 font-bold mt-2 inline-block">
-                    ★ Khuyên dùng cho học viên
-                  </span>
+                  <span className="font-bold text-xs text-slate-900">Kịch bản chuẩn</span>
                 </button>
 
                 {/* Đối thoại tự do */}
                 <button
                   type="button"
                   onClick={() => setSelectedMode('free')}
-                  className={`p-3 rounded-2xl border text-left transition-all cursor-pointer relative flex flex-col justify-between ${
+                  className={`p-3 rounded-2xl border text-center transition-all cursor-pointer relative flex items-center justify-center ${
                     selectedMode === 'free'
-                      ? 'border-red-600 bg-red-50/50 ring-2 ring-red-500/30 shadow-xs'
+                      ? 'border-red-600 bg-red-50/60 ring-2 ring-red-500/30 shadow-xs'
                       : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50'
                   }`}
                 >
@@ -373,24 +391,16 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
                       <CheckCircle2 className="w-4 h-4 fill-red-100" />
                     </div>
                   )}
-                  <div>
-                    <span className="font-bold text-xs text-slate-900 block mb-0.5">Đối thoại tự do</span>
-                    <p className="text-[11px] text-slate-500 leading-snug">
-                      Phản xạ linh hoạt cùng AI theo vai diễn
-                    </p>
-                  </div>
-                  <span className="text-[9px] font-mono text-slate-600 font-medium mt-2 inline-block">
-                    ⚡ Phản xạ mở rộng
-                  </span>
+                  <span className="font-bold text-xs text-slate-900">Đối thoại tự do</span>
                 </button>
 
                 {/* Kiểm tra quá trình */}
                 <button
                   type="button"
                   onClick={() => setSelectedMode('exam')}
-                  className={`p-3 rounded-2xl border text-left transition-all cursor-pointer relative flex flex-col justify-between ${
+                  className={`p-3 rounded-2xl border text-center transition-all cursor-pointer relative flex items-center justify-center ${
                     selectedMode === 'exam'
-                      ? 'border-red-600 bg-red-50/50 ring-2 ring-red-500/30 shadow-xs'
+                      ? 'border-red-600 bg-red-50/60 ring-2 ring-red-500/30 shadow-xs'
                       : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50'
                   }`}
                 >
@@ -399,113 +409,85 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
                       <CheckCircle2 className="w-4 h-4 fill-red-100" />
                     </div>
                   )}
-                  <div>
-                    <span className="font-bold text-xs text-slate-900 block mb-0.5">Kiểm tra quá trình</span>
-                    <p className="text-[11px] text-slate-500 leading-snug">
-                      Chấm điểm sát hạch nghiêm ngặt thang 100
-                    </p>
-                  </div>
-                  <span className="text-[9px] font-mono text-amber-700 font-bold mt-2 inline-block">
-                    🏆 Thang điểm 100
-                  </span>
+                  <span className="font-bold text-xs text-slate-900">Kiểm tra quá trình</span>
                 </button>
               </div>
             </div>
 
-            {/* 2. CẤP ĐỘ ĐÁNH GIÁ HỌC VIÊN VIAA */}
+            {/* 2. CẤP ĐỘ ĐÁNH GIÁ */}
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-xs font-black uppercase text-slate-900 tracking-wider flex items-center gap-1.5">
-                  <span className="w-5 h-5 rounded-full bg-red-600 text-white flex items-center justify-center text-[10px] font-bold">
-                    2
-                  </span>
-                  Cấp độ đánh giá học viên VIAA
-                </label>
-                <span className="text-[10px] text-slate-500">Mức độ hỗ trợ & chấm phát âm</span>
-              </div>
+              <label className="text-xs font-black uppercase text-slate-900 tracking-wider flex items-center gap-1.5 mb-2">
+                <span className="w-5 h-5 rounded-full bg-red-600 text-white flex items-center justify-center text-[10px] font-bold">
+                  2
+                </span>
+                Cấp độ đánh giá
+              </label>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 {/* Level 1: Beginner */}
                 <button
                   type="button"
                   onClick={() => setSelectedLevel('beginner')}
-                  className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                  className={`p-3 rounded-2xl border text-center transition-all cursor-pointer flex items-center justify-center relative ${
                     selectedLevel === 'beginner'
-                      ? 'border-red-600 bg-red-50/50 ring-2 ring-red-500/30 shadow-xs'
+                      ? 'border-red-600 bg-red-50/60 ring-2 ring-red-500/30 shadow-xs'
                       : 'border-slate-200 hover:border-slate-300 bg-white'
                   }`}
                 >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-bold text-xs text-slate-900">Mức 1: Cơ bản</span>
-                    {selectedLevel === 'beginner' && <Check className="w-3.5 h-3.5 text-red-600" />}
-                  </div>
-                  <p className="text-[11px] text-slate-500 leading-snug">
-                    Hỗ trợ Lời thoại nhắc nhở tiếng Việt & gợi ý mẫu câu. Chỉ cần trên 30% là đạt.
-                  </p>
-                  <span className="text-[10px] font-mono text-emerald-700 font-bold mt-1.5 block">
-                    ✓ Điểm &gt; 30% đạt
-                  </span>
+                  {selectedLevel === 'beginner' && (
+                    <div className="absolute top-2 right-2 text-red-600">
+                      <Check className="w-4 h-4" />
+                    </div>
+                  )}
+                  <span className="font-bold text-xs text-slate-900">Mức 1: Cơ bản (&gt;30%)</span>
                 </button>
 
                 {/* Level 2: Intermediate */}
                 <button
                   type="button"
                   onClick={() => setSelectedLevel('intermediate')}
-                  className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                  className={`p-3 rounded-2xl border text-center transition-all cursor-pointer flex items-center justify-center relative ${
                     selectedLevel === 'intermediate'
-                      ? 'border-red-600 bg-red-50/50 ring-2 ring-red-500/30 shadow-xs'
+                      ? 'border-red-600 bg-red-50/60 ring-2 ring-red-500/30 shadow-xs'
                       : 'border-slate-200 hover:border-slate-300 bg-white'
                   }`}
                 >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-bold text-xs text-slate-900">Mức 2: Tiêu chuẩn huấn luyện</span>
-                    {selectedLevel === 'intermediate' && <Check className="w-3.5 h-3.5 text-red-600" />}
-                  </div>
-                  <p className="text-[11px] text-slate-500 leading-snug">
-                    Quy chuẩn đào tạo kỹ thuật viên bảo dưỡng VJC.
-                  </p>
-                  <span className="text-[10px] font-mono text-sky-700 font-bold mt-1.5 block">
-                    ✓ Điểm &gt; 50% đạt
-                  </span>
+                  {selectedLevel === 'intermediate' && (
+                    <div className="absolute top-2 right-2 text-red-600">
+                      <Check className="w-4 h-4" />
+                    </div>
+                  )}
+                  <span className="font-bold text-xs text-slate-900">Mức 2: Tiêu chuẩn (&gt;50%)</span>
                 </button>
 
                 {/* Level 3: Advanced */}
                 <button
                   type="button"
                   onClick={() => setSelectedLevel('advanced')}
-                  className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                  className={`p-3 rounded-2xl border text-center transition-all cursor-pointer flex items-center justify-center relative ${
                     selectedLevel === 'advanced'
-                      ? 'border-red-600 bg-red-50/50 ring-2 ring-red-500/30 shadow-xs'
+                      ? 'border-red-600 bg-red-50/60 ring-2 ring-red-500/30 shadow-xs'
                       : 'border-slate-200 hover:border-slate-300 bg-white'
                   }`}
                 >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-bold text-xs text-slate-900">Mức 3: Đạt chuẩn đầu ra</span>
-                    {selectedLevel === 'advanced' && <Check className="w-3.5 h-3.5 text-red-600" />}
-                  </div>
-                  <p className="text-[11px] text-slate-500 leading-snug">
-                    Sát hạch chuẩn đầu ra khắt khe theo ICAO Doc 9432.
-                  </p>
-                  <span className="text-[10px] font-mono text-amber-700 font-bold mt-1.5 block">
-                    ✓ Điểm &gt; 70% đạt
-                  </span>
+                  {selectedLevel === 'advanced' && (
+                    <div className="absolute top-2 right-2 text-red-600">
+                      <Check className="w-4 h-4" />
+                    </div>
+                  )}
+                  <span className="font-bold text-xs text-slate-900">Mức 3: Đầu ra (&gt;70%)</span>
                 </button>
               </div>
             </div>
 
-            {/* 3. TÌNH HUỐNG BÀI HỌC (10 kịch bản tiêu chuẩn) */}
+            {/* 3. TÌNH HUỐNG BÀI HỌC */}
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-xs font-black uppercase text-slate-900 tracking-wider flex items-center gap-1.5">
-                  <span className="w-5 h-5 rounded-full bg-red-600 text-white flex items-center justify-center text-[10px] font-bold">
-                    3
-                  </span>
-                  Tình huống bài học (10 kịch bản tiêu chuẩn)
-                </label>
-                <span className="text-[10px] font-mono text-red-600 font-bold">
-                  {SCENARIOS.length} Bài học thực tế
+              <label className="text-xs font-black uppercase text-slate-900 tracking-wider flex items-center gap-1.5 mb-2">
+                <span className="w-5 h-5 rounded-full bg-red-600 text-white flex items-center justify-center text-[10px] font-bold">
+                  3
                 </span>
-              </div>
+                Tình huống bài học
+              </label>
 
               {/* Scenario Selector Dropdown */}
               <div className="relative">
@@ -524,58 +506,34 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
                   <ChevronRight className="w-4 h-4 rotate-90" />
                 </div>
               </div>
-
-              {/* Selected Scenario Preview Box */}
-              <div className="mt-2.5 p-3 rounded-2xl bg-slate-50 border border-slate-200 text-xs">
-                <div className="flex items-center justify-between text-[11px] font-medium text-slate-500 mb-1">
-                  <span className="text-red-700 font-bold font-mono">
-                    {chosenScenario.chapterTitle}
-                  </span>
-                  <span className="px-2 py-0.5 rounded-md bg-white border border-slate-200 font-mono text-slate-700">
-                    ✈ {chosenScenario.aircraft} · {chosenScenario.flight}
-                  </span>
-                </div>
-                <p className="font-semibold text-slate-800 text-xs line-clamp-1">
-                  Mục tiêu: {chosenScenario.objective}
-                </p>
-                <p className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">
-                  Điều kiện: {chosenScenario.conditions}
-                </p>
-              </div>
             </div>
 
             {/* 4. VAI TRÒ THỰC HÀNH */}
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-xs font-black uppercase text-slate-900 tracking-wider flex items-center gap-1.5">
-                  <span className="w-5 h-5 rounded-full bg-red-600 text-white flex items-center justify-center text-[10px] font-bold">
-                    4
-                  </span>
-                  Vai trò thực hành
-                </label>
-                <span className="text-[10px] text-slate-500">Bạn sẽ đóng vai và AI đóng vai còn lại</span>
-              </div>
+              <label className="text-xs font-black uppercase text-slate-900 tracking-wider flex items-center gap-1.5 mb-2">
+                <span className="w-5 h-5 rounded-full bg-red-600 text-white flex items-center justify-center text-[10px] font-bold">
+                  4
+                </span>
+                Vai trò thực hành
+              </label>
 
               <div className="grid grid-cols-2 gap-3">
                 {/* Headset Man */}
                 <button
                   type="button"
                   onClick={() => setSelectedRole('Ground')}
-                  className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
+                  className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
                     selectedRole === 'Ground'
                       ? 'border-red-600 bg-red-50/60 ring-2 ring-red-500/30 shadow-xs'
                       : 'border-slate-200 hover:border-slate-300 bg-white'
                   }`}
                 >
-                  <div className="w-10 h-10 rounded-xl bg-red-100 text-red-700 flex items-center justify-center shrink-0">
-                    <Wrench className="w-5 h-5" />
+                  <div className="w-9 h-9 rounded-xl bg-red-100 text-red-700 flex items-center justify-center shrink-0">
+                    <Wrench className="w-4 h-4" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <span className="font-bold text-xs text-slate-900 block truncate">
                       Headset Man (Thợ máy)
-                    </span>
-                    <span className="text-[10px] text-slate-500 block">
-                      AI sẽ đóng vai Phi công Cockpit
                     </span>
                   </div>
                   {selectedRole === 'Ground' && (
@@ -587,21 +545,18 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setSelectedRole('Cockpit')}
-                  className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
+                  className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
                     selectedRole === 'Cockpit'
                       ? 'border-amber-600 bg-amber-50/60 ring-2 ring-amber-500/30 shadow-xs'
                       : 'border-slate-200 hover:border-slate-300 bg-white'
                   }`}
                 >
-                  <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
-                    <Plane className="w-5 h-5" />
+                  <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                    <Plane className="w-4 h-4" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <span className="font-bold text-xs text-slate-900 block truncate">
                       Phi công (Cockpit)
-                    </span>
-                    <span className="text-[10px] text-slate-500 block">
-                      AI sẽ đóng vai Headset Man
                     </span>
                   </div>
                   {selectedRole === 'Cockpit' && (

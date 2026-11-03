@@ -40,6 +40,37 @@ export function playRadioClick(type: 'open' | 'close' = 'open') {
   }
 }
 
+// Play static audio file from URL with squelch radio click
+export async function playAudioFileUrl(audioUrl: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    try {
+      playRadioClick('open');
+      const audio = new Audio(audioUrl);
+      audio.onended = () => {
+        playRadioClick('close');
+        resolve();
+      };
+      audio.onerror = (e) => {
+        reject(e);
+      };
+      audio.play().catch(reject);
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+// Optional pre-recorded static audio map for zero-latency canned aviation phrases
+export const STATIC_SCRIPTED_AUDIO_MAP: Record<string, string> = {
+  // Pre-recorded audio files can be mapped here (e.g. '/assets/audio/cockpit_cleared_pushback.wav')
+};
+
+export function getStaticScriptedAudioUrl(text: string, speaker: 'Cockpit' | 'Ground'): string | null {
+  if (!text) return null;
+  const key = `${speaker}:${text.trim().toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ')}`;
+  return STATIC_SCRIPTED_AUDIO_MAP[key] || null;
+}
+
 // Play Base64 WAV from Gemini TTS
 export async function playWavAudio(base64Data: string): Promise<void> {
   return new Promise((resolve, reject) => {

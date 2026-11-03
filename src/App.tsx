@@ -16,7 +16,7 @@ import { ProwordGlossaryModal } from './components/ProwordGlossaryModal';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { LoginPage, UserSession } from './components/LoginPage';
 import { InstructorIntroModal } from './components/InstructorIntroModal';
-import { playWavAudio, speakWithBrowserTts } from './utils/audioPlayer';
+import { playWavAudio, speakWithBrowserTts, playAudioFileUrl, getStaticScriptedAudioUrl } from './utils/audioPlayer';
 import { DEFAULT_LMSTUDIO_API_KEY, detectBestAiEngine, DetectionResult } from './utils/aiEngineDetector';
 import { RefreshCw, X, Zap } from 'lucide-react';
 
@@ -228,6 +228,8 @@ export default function App() {
   const [isGlossaryOpen, setIsGlossaryOpen] = useState<boolean>(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false);
   const [activeNavTab, setActiveNavTab] = useState<'practice' | 'curriculum' | 'glossary' | 'history'>('practice');
+  // Collapsible training menu visibility (Default OFF per requirement)
+  const [isMenuOpen, setIsMenuOpen] = useState<boolean>(false);
 
   // History stored in localStorage
   const [historyList, setHistoryList] = useState<PracticeSessionHistory[]>(() => {
@@ -261,11 +263,19 @@ export default function App() {
     }
   }
 
-  // Direct audio or fallback voice playback with microphone lock (isAiSpeaking)
+  // Direct audio, static pre-recorded file, or fallback voice playback with microphone lock (isAiSpeaking)
   const playDirectAudioOrVoice = async (text: string, speaker: 'Cockpit' | 'Ground', base64Audio?: string | null) => {
     if (!voiceEnabled || !text) return;
     setIsAiSpeaking(true);
     try {
+      // 1. Check if a pre-recorded audio file exists for this scripted line (0ms latency, zero API cost)
+      const staticAudioUrl = getStaticScriptedAudioUrl(text, speaker);
+      if (staticAudioUrl) {
+        await playAudioFileUrl(staticAudioUrl);
+        return;
+      }
+
+      // 2. Direct Base64 audio returned by server
       const cacheKey = `${speaker}:${text}`;
       if (base64Audio) {
         ttsAudioCache.current.set(cacheKey, { audioBase64: base64Audio, useBrowserFallback: false });
@@ -683,121 +693,185 @@ export default function App() {
 
   return (
     <div className="h-screen max-h-screen flex flex-col bg-white text-slate-900 font-sans overflow-hidden">
-      {/* VIAA Top Bar with Victoria Aviation Academy Logo */}
-      <Header
-        onNewSession={() => startSession(selectedScenario, userRole, practiceMode)}
-        onOpenGlossary={() => setIsGlossaryOpen(true)}
-        onOpenHistory={() => setIsHistoryOpen(true)}
-        onOpenCurriculum={() => setIsCurriculumOpen(true)}
-        onOpenInstructorIntro={() => setIsInstructorIntroOpen(true)}
-        activeTab={activeNavTab}
-        setActiveTab={setActiveNavTab}
-        currentUser={currentUser}
-        onLogout={handleLogout}
-      />
+      {/* Sticky Training Session Bar - ALWAYS visible regardless of scroll */}
+      <div className="shrink-0 z-50 bg-slate-950 text-white px-3 sm:px-5 py-2 sm:py-2.5 flex items-center justify-between border-b border-slate-800 shadow-md">
+        <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+          {/* MENU ON / OFF toggle button (Default OFF) */}
+          <button
+            type="button"
+            onClick={() => setIsMenuOpen((prev) => !prev)}
+            className={`px-3 py-1.5 rounded-xl font-mono text-xs font-black tracking-wider uppercase flex items-center gap-2 transition-all cursor-pointer shadow-xs border ${
+              isMenuOpen
+                ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 border-amber-400 ring-2 ring-amber-400/30'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+            }`}
+            title={isMenuOpen ? 'Nhấn để đóng Menu' : 'Nhấn để mở Menu điều khiển'}
+          >
+            <span className={`w-2 h-2 rounded-full ${isMenuOpen ? 'bg-slate-950 animate-ping' : 'bg-slate-500'}`} />
+            <span>MENU: {isMenuOpen ? 'ON' : 'OFF'}</span>
+          </button>
 
-      {/* Control Strip: Option & Status Groups (Frozen/Pinned at top) */}
-      <TopControls
-        selectedScenario={selectedScenario}
-        onSelectScenario={(s) => setSelectedScenario(s)}
-        practiceMode={practiceMode}
-        onTogglePracticeMode={(mode) => {
-          setPracticeMode(mode);
-          startSession(selectedScenario, userRole, mode);
-        }}
-        studentLevel={studentLevel}
-        onChangeStudentLevel={(lvl) => setStudentLevel(lvl)}
-        userRole={userRole}
-        onToggleUserRole={(role) => setUserRole(role)}
-        voiceEnabled={voiceEnabled}
-        onToggleVoice={() => setVoiceEnabled((v) => !v)}
-        karaokeEnabled={karaokeEnabled}
-        onToggleKaraoke={() => setKaraokeEnabled((k) => !k)}
-        currentPairIndex={currentPairIndex}
-        totalPairs={selectedScenario.dialoguePairs.length}
-        showDetailedEvaluation={showDetailedEvaluation}
-        onToggleDetailedEvaluation={() => setShowDetailedEvaluation((prev) => !prev)}
-        localAiConfig={localAiConfig}
-        onUpdateLocalAiConfig={(cfg) => setLocalAiConfig(cfg)}
-      />
-
-      {/* Auto-Detect AI Engine Notification Banner */}
-      {engineNotification && (
-        <div
-          className={`px-4 sm:px-6 py-2 border-b text-xs flex items-center justify-between gap-3 transition-all shrink-0 animate-fadeIn ${
-            engineNotification.preferred === 'local'
-              ? 'bg-emerald-50/95 border-emerald-300 text-emerald-950'
-              : 'bg-sky-50/95 border-sky-300 text-sky-950'
-          }`}
-        >
-          <div className="flex items-center gap-2.5 overflow-hidden">
-            {engineNotification.preferred === 'local' ? (
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+          {/* Title right next to menu button on the same line: IN HOA, IN ĐẬM */}
+          <div className="min-w-0 flex items-center gap-2">
+            {practiceMode === 'exam' ? (
+              <span className="font-black uppercase tracking-wider text-amber-400 text-xs sm:text-sm md:text-base truncate drop-shadow-xs">
+                ĐANG THỰC HIỆN BÀI KIỂM TRA
+              </span>
             ) : (
-              <span className="w-2.5 h-2.5 rounded-full bg-sky-500 shrink-0" />
+              <span className="font-black uppercase tracking-wider text-white text-xs sm:text-sm md:text-base truncate drop-shadow-xs">
+                BÀI {SCENARIOS.findIndex((s) => s.id === selectedScenario.id) + 1}: {selectedScenario.title.toUpperCase()}
+              </span>
             )}
-            <div className="flex items-center gap-2 flex-wrap">
-              <span
-                className={`font-black uppercase tracking-wider text-[10px] px-2 py-0.5 rounded-md shadow-2xs border ${
-                  engineNotification.preferred === 'local'
-                    ? 'bg-emerald-600 text-white border-emerald-700'
-                    : 'bg-sky-600 text-white border-sky-700'
-                }`}
-              >
-                {engineNotification.preferred === 'local' ? '⚡ AI Local Ưu Tiên' : '🌐 Gemini Cloud'}
-              </span>
-              <span className="text-xs font-semibold leading-tight">
-                {engineNotification.message}
-              </span>
+          </div>
+        </div>
+
+        {/* Right side role & step badge */}
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="hidden sm:inline-flex px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700 text-[10px] font-mono text-slate-300 font-bold uppercase">
+            {userRole === 'Ground' ? 'HEADSET MAN' : 'COCKPIT'}
+          </span>
+          {practiceMode !== 'free' && (
+            <span className="px-2.5 py-1 rounded-lg bg-red-600 text-white font-mono text-[10px] font-black tracking-wider shadow-2xs">
+              BƯỚC {currentPairIndex}/{selectedScenario.dialoguePairs.length}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Collapsible Menu Section (Header, TopControls, Engine banner) - ONLY visible when isMenuOpen is true */}
+      {isMenuOpen && (
+        <div className="shrink-0 flex flex-col border-b border-slate-200 bg-white shadow-xl animate-fadeIn z-40 max-h-[75vh] overflow-y-auto">
+          {/* VIAA Top Bar with Victoria Aviation Academy Logo */}
+          <Header
+            onNewSession={() => {
+              startSession(selectedScenario, userRole, practiceMode);
+              setIsMenuOpen(false);
+            }}
+            onOpenGlossary={() => {
+              setIsGlossaryOpen(true);
+              setIsMenuOpen(false);
+            }}
+            onOpenHistory={() => {
+              setIsHistoryOpen(true);
+              setIsMenuOpen(false);
+            }}
+            onOpenCurriculum={() => {
+              setIsCurriculumOpen(true);
+              setIsMenuOpen(false);
+            }}
+            onOpenInstructorIntro={() => {
+              setIsInstructorIntroOpen(true);
+              setIsMenuOpen(false);
+            }}
+            activeTab={activeNavTab}
+            setActiveTab={setActiveNavTab}
+            currentUser={currentUser}
+            onLogout={handleLogout}
+          />
+
+          {/* Control Strip: Option & Status Groups */}
+          <TopControls
+            selectedScenario={selectedScenario}
+            onSelectScenario={(s) => setSelectedScenario(s)}
+            practiceMode={practiceMode}
+            onTogglePracticeMode={(mode) => {
+              setPracticeMode(mode);
+              startSession(selectedScenario, userRole, mode);
+            }}
+            studentLevel={studentLevel}
+            onChangeStudentLevel={(lvl) => setStudentLevel(lvl)}
+            userRole={userRole}
+            onToggleUserRole={(role) => setUserRole(role)}
+            voiceEnabled={voiceEnabled}
+            onToggleVoice={() => setVoiceEnabled((v) => !v)}
+            karaokeEnabled={karaokeEnabled}
+            onToggleKaraoke={() => setKaraokeEnabled((k) => !k)}
+            currentPairIndex={currentPairIndex}
+            totalPairs={selectedScenario.dialoguePairs.length}
+            showDetailedEvaluation={showDetailedEvaluation}
+            onToggleDetailedEvaluation={() => setShowDetailedEvaluation((prev) => !prev)}
+            localAiConfig={localAiConfig}
+            onUpdateLocalAiConfig={(cfg) => setLocalAiConfig(cfg)}
+          />
+
+          {/* Auto-Detect AI Engine Notification Banner */}
+          {engineNotification && (
+            <div
+              className={`px-4 sm:px-6 py-2 border-t text-xs flex items-center justify-between gap-3 transition-all shrink-0 ${
+                engineNotification.preferred === 'local'
+                  ? 'bg-emerald-50/95 border-emerald-300 text-emerald-950'
+                  : 'bg-sky-50/95 border-sky-300 text-sky-950'
+              }`}
+            >
+              <div className="flex items-center gap-2.5 overflow-hidden">
+                {engineNotification.preferred === 'local' ? (
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                ) : (
+                  <span className="w-2.5 h-2.5 rounded-full bg-sky-500 shrink-0" />
+                )}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span
+                    className={`font-black uppercase tracking-wider text-[10px] px-2 py-0.5 rounded-md shadow-2xs border ${
+                      engineNotification.preferred === 'local'
+                        ? 'bg-emerald-600 text-white border-emerald-700'
+                        : 'bg-sky-600 text-white border-sky-700'
+                    }`}
+                  >
+                    {engineNotification.preferred === 'local' ? '⚡ AI Local Ưu Tiên' : '🌐 Gemini Cloud'}
+                  </span>
+                  <span className="text-xs font-semibold leading-tight">
+                    {engineNotification.message}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLocalAiConfig((prev) => ({
+                      ...prev,
+                      enabled: !prev.enabled,
+                    }));
+                    setEngineNotification((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            preferred: prev.preferred === 'local' ? 'cloud' : 'local',
+                            message:
+                              prev.preferred === 'local'
+                                ? 'Đã chuyển thủ công sang Gemini 3.1 Flash Lite đám mây.'
+                                : 'Đã chuyển thủ công sang Local AI nội bộ.',
+                          }
+                        : null
+                    );
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-white hover:bg-slate-100 border border-slate-300 text-slate-800 font-bold text-xs transition-colors cursor-pointer shadow-2xs"
+                >
+                  {localAiConfig.enabled ? 'Đổi sang Gemini Cloud' : 'Ưu tiên Local AI'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => runEngineAutoDetection(true)}
+                  disabled={isDetectingEngine}
+                  className="p-1.5 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-white/80 transition-colors cursor-pointer border border-transparent hover:border-slate-300"
+                  title="Dò tìm lại engine AI nhanh nhất (Auto-detect)"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isDetectingEngine ? 'animate-spin text-amber-600' : ''}`} />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setEngineNotification(null)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-white/80 transition-colors cursor-pointer"
+                  title="Đóng thông báo"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            {/* Quick toggle to opposite engine */}
-            <button
-              type="button"
-              onClick={() => {
-                setLocalAiConfig((prev) => ({
-                  ...prev,
-                  enabled: !prev.enabled,
-                }));
-                setEngineNotification((prev) =>
-                  prev
-                    ? {
-                        ...prev,
-                        preferred: prev.preferred === 'local' ? 'cloud' : 'local',
-                        message:
-                          prev.preferred === 'local'
-                            ? 'Đã chuyển thủ công sang Gemini 3.1 Flash Lite đám mây.'
-                            : 'Đã chuyển thủ công sang Local AI nội bộ.',
-                      }
-                    : null
-                );
-              }}
-              className="px-2.5 py-1 rounded-lg bg-white hover:bg-slate-100 border border-slate-300 text-slate-800 font-bold text-xs transition-colors cursor-pointer shadow-2xs"
-            >
-              {localAiConfig.enabled ? 'Đổi sang Gemini Cloud' : 'Ưu tiên Local AI'}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => runEngineAutoDetection(true)}
-              disabled={isDetectingEngine}
-              className="p-1.5 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-white/80 transition-colors cursor-pointer border border-transparent hover:border-slate-300"
-              title="Dò tìm lại engine AI nhanh nhất (Auto-detect)"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isDetectingEngine ? 'animate-spin text-amber-600' : ''}`} />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setEngineNotification(null)}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-white/80 transition-colors cursor-pointer"
-              title="Đóng thông báo"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
+          )}
         </div>
       )}
 
