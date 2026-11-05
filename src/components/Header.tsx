@@ -1,5 +1,5 @@
 import React from 'react';
-import { BookOpen, History, RotateCcw, HelpCircle, LogOut, User as UserIcon, Shield, GraduationCap } from 'lucide-react';
+import { BookOpen, History, RotateCcw, HelpCircle, LogOut, User as UserIcon, Shield, GraduationCap, FileText } from 'lucide-react';
 import { UserSession } from './LoginPage';
 
 interface HeaderProps {
@@ -8,6 +8,7 @@ interface HeaderProps {
   onOpenHistory: () => void;
   onOpenCurriculum: () => void;
   onOpenInstructorIntro?: () => void;
+  onOpenReport?: () => void;
   activeTab: 'practice' | 'curriculum' | 'glossary' | 'history';
   setActiveTab: (tab: 'practice' | 'curriculum' | 'glossary' | 'history') => void;
   currentUser?: UserSession | null;
@@ -20,6 +21,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenHistory,
   onOpenCurriculum,
   onOpenInstructorIntro,
+  onOpenReport,
   activeTab,
   setActiveTab,
   currentUser,
@@ -40,9 +42,12 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="text-base sm:text-lg font-black tracking-tight text-red-600 font-mono">
               VIAA
             </span>
+            <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-md bg-red-100 text-red-700 border border-red-200">
+              v2.2
+            </span>
           </div>
           <span className="hidden sm:inline text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
-            Học Viện Hàng Không Victoria · Huấn Luyện Đàm Thoại
+            HỌC VIỆN HÀNG KHÔNG VICTORIA
           </span>
         </div>
       </div>
@@ -138,6 +143,17 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <GraduationCap className="w-3.5 h-3.5 text-red-600" />
             <span className="hidden sm:inline">Menu Khóa Học</span>
+          </button>
+        )}
+
+        {onOpenReport && (
+          <button
+            onClick={onOpenReport}
+            className="px-3 py-1.5 sm:px-3.5 sm:py-2 text-xs sm:text-sm font-bold text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-xl transition-colors shadow-xs flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+            title="Lưu báo cáo & Xuất PDF"
+          >
+            <FileText className="w-3.5 h-3.5 text-red-600" />
+            <span className="hidden md:inline">Save Report</span>
           </button>
         )}
 

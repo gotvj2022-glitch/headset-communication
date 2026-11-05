@@ -62,12 +62,22 @@ export async function playAudioFileUrl(audioUrl: string): Promise<void> {
 
 // Optional pre-recorded static audio map for zero-latency canned aviation phrases
 export const STATIC_SCRIPTED_AUDIO_MAP: Record<string, string> = {
-  // Pre-recorded audio files can be mapped here (e.g. '/assets/audio/cockpit_cleared_pushback.wav')
+  // Common ICAO aviation script phrases (zero network latency)
+  'ground:parking brakes released': '',
+  'cockpit:parking brakes released': '',
+  'ground:parking brakes set': '',
+  'cockpit:parking brakes set': '',
+  'ground:parking brake set': '',
+  'cockpit:parking brake set': '',
+  'ground:cleared for pushback': '',
+  'cockpit:cleared for pushback': '',
+  'ground:contact ground on 121 point 9': '',
+  'cockpit:contact ground on 121 point 9': '',
 };
 
 export function getStaticScriptedAudioUrl(text: string, speaker: 'Cockpit' | 'Ground'): string | null {
   if (!text) return null;
-  const key = `${speaker}:${text.trim().toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ')}`;
+  const key = `${speaker.toLowerCase()}:${text.trim().toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ')}`;
   return STATIC_SCRIPTED_AUDIO_MAP[key] || null;
 }
 

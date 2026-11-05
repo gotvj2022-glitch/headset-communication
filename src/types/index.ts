@@ -83,14 +83,22 @@ export interface PracticeSessionHistory {
   rubricLevel: string;
 }
 
-export type LocalAiProvider = 'ollama' | 'lmstudio' | 'vllm' | 'custom';
+export type LocalAiProvider = 'ollama' | 'lmstudio' | 'vllm' | 'docker' | 'openwebui' | 'custom';
 
 export interface LocalAiConfig {
   enabled: boolean;
   provider: LocalAiProvider;
-  endpoint: string; // e.g. http://localhost:11434/v1
-  model: string; // e.g. qwen2.5:3b
+  endpoint: string; // e.g. http://172.30.115.239:8090/api, http://localhost:11434/v1 or http://localhost:8081/v1
+  model: string; // e.g. qwen2.5:3b, localai, or model name in Open WebUI
   apiKey?: string;
   temperature?: number;
+  dockerOfflineEnabled?: boolean;
+  whisperEndpoint?: string; // e.g. http://172.30.115.239:8000/v1 or http://localhost:8000/v1
+  whisperModel?: string; // e.g. Systran/faster-whisper-small or whisper-1
+  localAiTtsEndpoint?: string; // e.g. http://172.30.115.239:8081/v1 or http://localhost:8081/v1
+  localAiTtsVoice?: string; // e.g. en-us-male or default
+  lanHostIp?: string; // e.g. '172.30.115.239' (Server IP on WiFi) or 'localhost'
+  openWebUiEndpoint?: string; // e.g. 'http://172.30.115.239:8090/api'
 }
+
 

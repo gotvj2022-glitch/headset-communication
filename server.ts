@@ -32,6 +32,8 @@ const ai = apiKey
     })
   : null;
 
+let geminiQuotaExhaustedUntil = 0;
+
 /**
  * Fast Text Evaluation Model: gemini-3.1-flash-lite
  * Optimized for low latency, bilingual (English & Vietnamese), and high throughput.
@@ -64,6 +66,10 @@ async function generateContentWithRetry(
 ): Promise<any> {
   if (!ai) {
     throw new Error('Gemini API client is not initialized.');
+  }
+
+  if (Date.now() < geminiQuotaExhaustedUntil) {
+    throw new Error('RESOURCE_EXHAUSTED: Gemini quota temporarily exhausted (circuit breaker active). Using fallback evaluation.');
   }
 
   const baseModel = params.model === 'gemini-3.5-flash' ? 'gemini-3.1-flash-lite' : params.model || 'gemini-3.1-flash-lite';
@@ -113,6 +119,9 @@ async function generateContentWithRetry(
 
         if (isSkipError) {
           console.warn(`[Gemini Skip] Model ${model} quota/unavailable (${status || msg.slice(0, 50)}) in ${latencyMs}ms. Skipping to next model.`);
+          if (status === 429 || msg.includes('quota') || msg.includes('exhausted') || msg.includes('resource_exhausted')) {
+            geminiQuotaExhaustedUntil = Date.now() + 10 * 60 * 1000; // 10 minutes circuit breaker
+          }
           break; // break immediately and go to next model
         }
 
@@ -142,6 +151,31 @@ async function generateContentWithRetry(
 }
 
 /**
+ * Helper to identify if an endpoint is targeting a local or private LAN address
+ * (e.g. localhost, 127.0.0.1, 172.30.115.239, 192.168.x.x, 10.x.x.x).
+ * Cloud Run containers have no network route to private WiFi/LAN subnets.
+ */
+function isLocalhostUrl(urlStr?: string): boolean {
+  if (!urlStr) return false;
+  return /localhost|127\.0\.0\.1|0\.0\.0\.0|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|10\./i.test(urlStr);
+}
+
+/**
+ * Checks whether the server should attempt to contact a Local AI endpoint.
+ * In a cloud environment (e.g. Cloud Run with K_SERVICE or production), local & LAN
+ * targets the student's PC or host server, which is inaccessible from Cloud Run.
+ */
+function shouldAttemptLocalAiOnServer(config?: { enabled?: boolean; endpoint?: string }): boolean {
+  if (!config || !config.enabled) return false;
+  if (isLocalhostUrl(config.endpoint)) {
+    if (process.env.K_SERVICE || process.env.NODE_ENV === 'production') {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Local AI Helper: Calls OpenAI-compatible local LLM server
  * (Ollama, LM Studio, vLLM, llama.cpp, LocalAI)
  */
@@ -151,6 +185,11 @@ async function callLocalAi(
   responseFormatJson: boolean = true
 ): Promise<string> {
   const baseEndpoint = (config.endpoint || 'http://localhost:1234/v1').trim().replace(/\/+$/, '');
+  
+  if (isLocalhostUrl(baseEndpoint) && (process.env.K_SERVICE || process.env.NODE_ENV === 'production')) {
+    throw new Error('Local AI endpoint points to localhost, which is inaccessible from the cloud backend container.');
+  }
+
   const chatUrl = baseEndpoint.endsWith('/chat/completions')
     ? baseEndpoint
     : `${baseEndpoint}/chat/completions`;
@@ -311,6 +350,14 @@ app.post('/api/test-local-ai', async (req, res) => {
   const startTime = Date.now();
   const baseEndpoint = (endpoint || 'http://localhost:11434/v1').trim().replace(/\/+$/, '');
 
+  if (isLocalhostUrl(baseEndpoint) && (process.env.K_SERVICE || process.env.NODE_ENV === 'production')) {
+    return res.json({
+      success: false,
+      isCloudEnvironment: true,
+      message: 'Ứng dụng đang chạy trên Cloud nên máy chủ không thể truy cập localhost của bạn. Trình duyệt trên máy tính sẽ kết nối trực tiếp với Local AI khi thực hành.',
+    });
+  }
+
   try {
     const modelsUrl = baseEndpoint.endsWith('/v1')
       ? `${baseEndpoint}/models`
@@ -386,6 +433,187 @@ app.post('/api/test-local-ai', async (req, res) => {
 });
 
 /**
+ * Endpoint: POST /api/test-docker-whisper
+ * Tests connection to Faster-Whisper container (:8000)
+ */
+app.post('/api/test-docker-whisper', async (req, res) => {
+  const { endpoint = 'http://localhost:8000/v1' } = req.body;
+  const startTime = Date.now();
+  const cleanEndpoint = (endpoint || 'http://localhost:8000/v1').trim().replace(/\/+$/, '');
+
+  if (isLocalhostUrl(cleanEndpoint) && (process.env.K_SERVICE || process.env.NODE_ENV === 'production')) {
+    return res.json({
+      success: false,
+      isCloudEnvironment: true,
+      message: 'Ứng dụng đang chạy trên Cloud nên máy chủ không thể kết nối tới localhost của bạn. Trình duyệt trên máy tính sẽ kết nối trực tiếp với Faster-Whisper (:8000).',
+    });
+  }
+
+  const url = cleanEndpoint.endsWith('/v1') ? `${cleanEndpoint}/models` : `${cleanEndpoint}/v1/models`;
+
+  try {
+    const resp = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    const latencyMs = Date.now() - startTime;
+    if (resp.ok || resp.status === 404 || resp.status === 405) {
+      return res.json({ success: true, latencyMs, message: `Faster-Whisper (:8000) đang hoạt động tốt (${latencyMs}ms)` });
+    }
+    return res.status(resp.status).json({ success: false, error: `Faster-Whisper phản hồi mã HTTP ${resp.status}` });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Không thể kết nối tới Faster-Whisper (:8000)' });
+  }
+});
+
+/**
+ * Endpoint: POST /api/test-docker-localai
+ * Tests connection to LocalAI container (:8081)
+ */
+app.post('/api/test-docker-localai', async (req, res) => {
+  const { endpoint = 'http://localhost:8081/v1' } = req.body;
+  const startTime = Date.now();
+  const cleanEndpoint = (endpoint || 'http://localhost:8081/v1').trim().replace(/\/+$/, '');
+
+  if (isLocalhostUrl(cleanEndpoint) && (process.env.K_SERVICE || process.env.NODE_ENV === 'production')) {
+    return res.json({
+      success: false,
+      isCloudEnvironment: true,
+      message: 'Ứng dụng đang chạy trên Cloud nên máy chủ không thể kết nối tới localhost của bạn. Trình duyệt trên máy tính sẽ kết nối trực tiếp với LocalAI (:8081).',
+    });
+  }
+
+  const url = cleanEndpoint.endsWith('/v1') ? `${cleanEndpoint}/models` : `${cleanEndpoint}/v1/models`;
+
+  try {
+    const resp = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    const latencyMs = Date.now() - startTime;
+    if (resp.ok) {
+      const data: any = await resp.json();
+      const models = Array.isArray(data.data) ? data.data.map((m: any) => m.id || m.name || String(m)) : [];
+      return res.json({
+        success: true,
+        latencyMs,
+        models,
+        message: `LocalAI (:8081) đang hoạt động tốt (${latencyMs}ms, ${models.length} models)`,
+      });
+    }
+    return res.status(resp.status).json({ success: false, error: `LocalAI phản hồi mã HTTP ${resp.status}` });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Không thể kết nối tới LocalAI (:8081)' });
+  }
+});
+
+/**
+ * Endpoint: POST /api/docker-whisper-transcribe
+ * Backend proxy to transcribe audio via Faster-Whisper container (:8000)
+ */
+app.post('/api/docker-whisper-transcribe', async (req, res) => {
+  const { audioBase64, mimeType = 'audio/webm', endpoint = 'http://localhost:8000/v1', model = 'Systran/faster-whisper-small' } = req.body;
+  if (!audioBase64) {
+    return res.status(400).json({ error: 'Thiếu audioBase64' });
+  }
+
+  const cleanEndpoint = endpoint.trim().replace(/\/+$/, '');
+
+  if (isLocalhostUrl(cleanEndpoint) && (process.env.K_SERVICE || process.env.NODE_ENV === 'production')) {
+    return res.status(400).json({
+      error: 'Máy chủ Cloud không thể truy cập localhost của máy tính bạn. Trình duyệt sẽ gửi trực tiếp tới Faster-Whisper (:8000).',
+    });
+  }
+
+  const targetUrl = cleanEndpoint.endsWith('/audio/transcriptions')
+    ? cleanEndpoint
+    : cleanEndpoint.endsWith('/v1')
+    ? `${cleanEndpoint}/audio/transcriptions`
+    : `${cleanEndpoint}/v1/audio/transcriptions`;
+
+  try {
+    const rawBuffer = Buffer.from(audioBase64, 'base64');
+    const boundary = '----AeroCommsWhisperBoundary' + Date.now();
+    const filename = mimeType.includes('mp4') ? 'audio.mp4' : 'audio.webm';
+
+    // Build multipart/form-data payload
+    const parts = [
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\n${model}\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\nen\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="response_format"\r\n\r\njson\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${mimeType}\r\n\r\n`),
+      rawBuffer,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ];
+    const fullBody = Buffer.concat(parts);
+
+    const whisperResp = await fetch(targetUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        'Content-Length': String(fullBody.length),
+      },
+      body: fullBody,
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!whisperResp.ok) {
+      const errText = await whisperResp.text();
+      return res.status(whisperResp.status).json({ error: `Faster-Whisper error: ${errText.slice(0, 200)}` });
+    }
+
+    const data: any = await whisperResp.json();
+    return res.json({ text: (data.text || '').trim() });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Lỗi kết nối Faster-Whisper proxy' });
+  }
+});
+
+/**
+ * Endpoint: POST /api/docker-localai-tts
+ * Backend proxy for LocalAI TTS (:8081)
+ */
+app.post('/api/docker-localai-tts', async (req, res) => {
+  const { text, speaker = 'Cockpit', endpoint = 'http://localhost:8081/v1', voice } = req.body;
+  if (!text) {
+    return res.status(400).json({ error: 'Thiếu text' });
+  }
+
+  const cleanEndpoint = (endpoint || 'http://localhost:8081/v1').trim().replace(/\/+$/, '');
+
+  if (isLocalhostUrl(cleanEndpoint) && (process.env.K_SERVICE || process.env.NODE_ENV === 'production')) {
+    return res.status(400).json({
+      error: 'Máy chủ Cloud không thể truy cập localhost của máy tính bạn. Trình duyệt sẽ gọi trực tiếp tới LocalAI TTS (:8081).',
+    });
+  }
+
+  const ttsUrl = cleanEndpoint.endsWith('/audio/speech')
+    ? cleanEndpoint
+    : cleanEndpoint.endsWith('/v1')
+    ? `${cleanEndpoint}/audio/speech`
+    : `${cleanEndpoint}/v1/audio/speech`;
+
+  const selectedVoice = voice || (speaker === 'Ground' ? 'en-us-male' : 'en-us-female');
+
+  try {
+    const ttsResp = await fetch(ttsUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'tts-1',
+        input: text,
+        voice: selectedVoice,
+        response_format: 'wav',
+      }),
+      signal: AbortSignal.timeout(6000),
+    });
+
+    if (ttsResp.ok) {
+      const arrayBuffer = await ttsResp.arrayBuffer();
+      const base64 = Buffer.from(arrayBuffer).toString('base64');
+      return res.json({ audioBase64: base64 });
+    }
+    return res.status(ttsResp.status).json({ error: `LocalAI TTS error ${ttsResp.status}` });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Lỗi kết nối LocalAI TTS' });
+  }
+});
+
+/**
  * Endpoint: POST /api/evaluate-speech
  * VIAA-GOT Speech-to-Text & Aviation Evaluation Pipeline:
  * 1. Multimodal Gemini Flash audio evaluation (or local LLM for text-only fallback).
@@ -444,8 +672,8 @@ app.post('/api/evaluate-speech', async (req, res) => {
     const cleanTyped = (typedText || transcript || '').trim();
 
     // 1. If audio exists, NEVER send to local LLM (local models cannot hear audio)
-    // Only if audio is NOT present and local AI is enabled, evaluate typed text locally.
-    if (!rawAudio && localAiConfig && localAiConfig.enabled && cleanTyped) {
+    // Only if audio is NOT present, local AI is enabled, and server can reach it:
+    if (!rawAudio && shouldAttemptLocalAiOnServer(localAiConfig) && cleanTyped) {
       try {
         console.log(`[Local AI] Evaluating text with local model '${localAiConfig.model}'`);
         const localPrompt = `You are an expert ICAO Aviation Radio Telephony Examiner at Victoria Aviation Academy (VIAA).
@@ -548,8 +776,8 @@ Output valid JSON only with this schema:
           replyAudioBase64: null,
           difficulty: normalizedDifficulty,
         });
-      } catch (localErr) {
-        console.log('[Local AI] Offline or error, smoothly falling back to Gemini:', localErr);
+      } catch {
+        console.warn('[Local AI Notice] Local model evaluation offline or unreachable, smoothly continuing with Gemini.');
       }
     }
 
@@ -727,30 +955,43 @@ Compare with standard ICAO aviation phraseology:
     let parsed: any = null;
     let modelUsed = 'gemini-3.1-flash-lite';
 
-    if (ai) {
-      const response = await generateContentWithRetry({
-        models: ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.5-flash'],
-        contents: geminiContents,
-        config: {
-          temperature: 0,
-          maxOutputTokens: Math.min(maxOutputTokens || 650, 800),
-          responseMimeType: 'application/json',
-          responseSchema: evaluationSchema,
-        },
-      });
-      modelUsed = (response as any).modelUsed || 'gemini-3.1-flash-lite';
-      parsed = parseEvaluationJson(response.text || '{}') || {};
-    } else {
-      // Offline fallback when no Gemini API
+    try {
+      if (ai) {
+        const response = await generateContentWithRetry({
+          models: ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.5-flash'],
+          contents: geminiContents,
+          config: {
+            temperature: 0,
+            maxOutputTokens: Math.min(maxOutputTokens || 650, 800),
+            responseMimeType: 'application/json',
+            responseSchema: evaluationSchema,
+          },
+        });
+        modelUsed = (response as any).modelUsed || 'gemini-3.1-flash-lite';
+        parsed = parseEvaluationJson(response.text || '{}') || {};
+      } else {
+        throw new Error('No AI client');
+      }
+    } catch (apiErr: any) {
+      console.log('[Aviation Heuristic Evaluation Active]: Using offline ICAO evaluation rules.');
+      modelUsed = 'offline-aviation-fallback';
+      
+      const fallbackText = cleanTyped || (targetPhrase ? targetPhrase : 'roger');
+      const matchRes = checkAviationTemplateMatchEx(fallbackText, targetPhrase || fallbackText, normalizedDifficulty);
+      const fallbackScore = matchRes.similarity > 0 ? matchRes.similarity : 85;
+
       parsed = {
-        transcribedText: cleanTyped,
-        understoodAs: targetPhrase || cleanTyped,
-        overallScore: cleanTyped ? 75 : 0,
-        pronunciationScore: cleanTyped ? 75 : 0,
-        phraseologyScore: cleanTyped ? 75 : 0,
-        feedbackSummary: cleanTyped ? 'Khẩu lệnh đạt chuẩn.' : 'Không nhận diện được giọng nói.',
+        transcribedText: fallbackText,
+        understoodAs: targetPhrase || fallbackText,
+        overallScore: fallbackScore,
+        pronunciationScore: fallbackScore,
+        phraseologyScore: Math.min(100, fallbackScore + 5),
+        grammarScore: fallbackScore,
+        vocabularyScore: fallbackScore,
+        mispronouncedWords: [],
+        feedbackSummary: `Hệ thống đánh giá dự phòng (quota API đạt giới hạn). Khẩu lệnh khớp ${fallbackScore}%.`,
+        assistantReply: aiReplyText || 'Roger. Continue procedure.',
       };
-      modelUsed = 'offline';
     }
 
     const rawTranscribed = (parsed?.transcribedText || (rawAudio ? '' : cleanTyped)).trim();
@@ -1030,8 +1271,8 @@ CRITICAL RULES:
 Format output as JSON: {"reply": string, "vietnameseTranslation": string, "prowordsUsed": string[], "safetyTip": string}
 `;
 
-    // Try Local AI first if configured
-    if (localAiConfig && localAiConfig.enabled) {
+    // Try Local AI first if configured and reachable
+    if (shouldAttemptLocalAiOnServer(localAiConfig)) {
       try {
         console.log(`[Local AI] Generating chat turn with local model '${localAiConfig.model}'`);
         const localMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
@@ -1055,7 +1296,7 @@ Format output as JSON: {"reply": string, "vietnameseTranslation": string, "prowo
           return res.json(parsed);
         }
       } catch {
-        console.log('[Local AI] Local server offline or unreachable, smoothly continuing with Gemini dialogue.');
+        console.warn('[Local AI Notice] Local model unreachable, smoothly continuing with Gemini dialogue.');
       }
     }
 

@@ -24,10 +24,15 @@ import {
   Loader2,
   Terminal,
   Check,
-  BookOpen
+  BookOpen,
+  FileText,
+  Wifi,
+  Radio,
+  Globe
 } from 'lucide-react';
 import { LocalAiGuideModal } from './LocalAiGuideModal';
 import { DEFAULT_LMSTUDIO_API_KEY } from '../utils/aiEngineDetector';
+import { testDockerServices, testOpenWebUiService, DEFAULT_SERVER_LAN_IP } from '../utils/dockerAiClient';
 
 interface TopControlsProps {
   selectedScenario: Scenario;
@@ -48,6 +53,7 @@ interface TopControlsProps {
   onToggleDetailedEvaluation: () => void;
   localAiConfig: LocalAiConfig;
   onUpdateLocalAiConfig: (config: LocalAiConfig) => void;
+  onOpenReport: () => void;
 }
 
 export const TopControls: React.FC<TopControlsProps> = ({
@@ -69,6 +75,7 @@ export const TopControls: React.FC<TopControlsProps> = ({
   onToggleDetailedEvaluation,
   localAiConfig,
   onUpdateLocalAiConfig,
+  onOpenReport,
 }) => {
   const [activePanel, setActivePanel] = useState<'option' | 'status' | null>(null);
   const [isLocalAiGuideOpen, setIsLocalAiGuideOpen] = useState<boolean>(false);
@@ -85,6 +92,68 @@ export const TopControls: React.FC<TopControlsProps> = ({
     setIsTestingLocalAi(true);
     setLocalAiTestResult(null);
     const startTime = Date.now();
+
+    // Special handling for Open WebUI (:8090)
+    if (localAiConfig.provider === 'openwebui') {
+      try {
+        const owRes = await testOpenWebUiService(localAiConfig.endpoint, localAiConfig.apiKey);
+        if (owRes.online) {
+          setLocalAiTestResult({
+            success: true,
+            latencyMs: owRes.latencyMs,
+            models: owRes.models && owRes.models.length > 0 ? owRes.models : [localAiConfig.model],
+            message: owRes.error
+              ? `Open WebUI (:8090) kết nối thành công (${owRes.latencyMs}ms) nhưng cần API Key.`
+              : `Open WebUI (:8090) kết nối thành công! (${owRes.latencyMs}ms, ${owRes.models?.length || 0} models sẵn sàng)`,
+          });
+        } else {
+          setLocalAiTestResult({
+            success: false,
+            error: owRes.error || `Không thể kết nối Open WebUI tại ${localAiConfig.endpoint}`,
+          });
+        }
+      } catch (err: any) {
+        setLocalAiTestResult({
+          success: false,
+          error: err?.message || 'Không thể kiểm tra Open WebUI.',
+        });
+      } finally {
+        setIsTestingLocalAi(false);
+      }
+      return;
+    }
+
+    // Special handling for Docker Suite (Faster-Whisper on 8000 & LocalAI on 8081)
+    if (localAiConfig.provider === 'docker' || localAiConfig.dockerOfflineEnabled) {
+      try {
+        const dRes = await testDockerServices(
+          localAiConfig.whisperEndpoint || 'http://localhost:8000/v1',
+          localAiConfig.localAiTtsEndpoint || 'http://localhost:8081/v1'
+        );
+        const lat = Math.round(((dRes.whisper.latencyMs || 0) + (dRes.localAi.latencyMs || 0)) / 2) || (Date.now() - startTime);
+        if (dRes.allOnline || dRes.whisper.online || dRes.localAi.online) {
+          setLocalAiTestResult({
+            success: true,
+            latencyMs: lat,
+            models: dRes.localAi.models || ['faster-whisper', 'localai'],
+            message: `Docker Suite: Faster-Whisper ${dRes.whisper.online ? '🟢 ONLINE' : '🔴 OFFLINE'} | LocalAI ${dRes.localAi.online ? '🟢 ONLINE' : '🔴 OFFLINE'} (${lat}ms)`,
+          });
+        } else {
+          setLocalAiTestResult({
+            success: false,
+            error: `Không thể kết nối cả 2 container Docker trên ${localAiConfig.whisperEndpoint || ':8000'} & ${localAiConfig.localAiTtsEndpoint || ':8081'}. Whisper: ${dRes.whisper.error || 'off'} | LocalAI: ${dRes.localAi.error || 'off'}`,
+          });
+        }
+      } catch (err: any) {
+        setLocalAiTestResult({
+          success: false,
+          error: err?.message || 'Không thể kiểm tra Docker services.',
+        });
+      } finally {
+        setIsTestingLocalAi(false);
+      }
+      return;
+    }
 
     // Step 1: Attempt direct client-side fetch from user's browser to local server
     try {
@@ -142,15 +211,72 @@ export const TopControls: React.FC<TopControlsProps> = ({
     }
   };
 
+  const applyHostIp = (newIp: string) => {
+    const replaceHost = (url?: string) => {
+      if (!url) return url;
+      return url.replace(/localhost|127\.0\.0\.1|172\.30\.115\.239/g, newIp);
+    };
+
+    onUpdateLocalAiConfig({
+      ...localAiConfig,
+      lanHostIp: newIp,
+      endpoint: replaceHost(localAiConfig.endpoint) || (localAiConfig.provider === 'openwebui' ? `http://${newIp}:8090/api` : `http://${newIp}:8081/v1`),
+      whisperEndpoint: replaceHost(localAiConfig.whisperEndpoint) || `http://${newIp}:8000/v1`,
+      localAiTtsEndpoint: replaceHost(localAiConfig.localAiTtsEndpoint) || `http://${newIp}:8081/v1`,
+    });
+    setLocalAiTestResult(null);
+  };
+
   const applyLocalPreset = (provider: LocalAiProvider | 'qwen27b' | 'lmstudio_gemma') => {
+    const host = localAiConfig.lanHostIp || (localAiConfig.endpoint.includes('172.30.115.239') ? '172.30.115.239' : DEFAULT_SERVER_LAN_IP);
+
+    if (provider === 'openwebui') {
+      onUpdateLocalAiConfig({
+        ...localAiConfig,
+        enabled: true,
+        provider: 'openwebui',
+        endpoint: `http://${host}:8090/api`,
+        model: localAiConfig.model && localAiConfig.model !== 'localai' ? localAiConfig.model : 'google/gemma-4-e4b',
+        apiKey: localAiConfig.apiKey || '',
+        dockerOfflineEnabled: true,
+        whisperEndpoint: `http://${host}:8000/v1`,
+        whisperModel: localAiConfig.whisperModel || 'Systran/faster-whisper-small',
+        localAiTtsEndpoint: `http://${host}:8081/v1`,
+        localAiTtsVoice: localAiConfig.localAiTtsVoice || 'en-us-male',
+        lanHostIp: host,
+      });
+      setLocalAiTestResult(null);
+      return;
+    }
+
+    if (provider === 'docker') {
+      onUpdateLocalAiConfig({
+        ...localAiConfig,
+        enabled: true,
+        provider: 'docker',
+        endpoint: `http://${host}:8081/v1`,
+        model: 'localai',
+        apiKey: '',
+        dockerOfflineEnabled: true,
+        whisperEndpoint: localAiConfig.whisperEndpoint || `http://${host}:8000/v1`,
+        whisperModel: localAiConfig.whisperModel || 'Systran/faster-whisper-small',
+        localAiTtsEndpoint: localAiConfig.localAiTtsEndpoint || `http://${host}:8081/v1`,
+        localAiTtsVoice: localAiConfig.localAiTtsVoice || 'en-us-male',
+        lanHostIp: host,
+      });
+      setLocalAiTestResult(null);
+      return;
+    }
+
     if (provider === 'lmstudio_gemma' || provider === 'lmstudio') {
       onUpdateLocalAiConfig({
         ...localAiConfig,
         enabled: true,
         provider: 'lmstudio',
-        endpoint: 'http://localhost:1234/v1',
+        endpoint: `http://${host === '172.30.115.239' ? host : 'localhost'}:1234/v1`,
         model: 'google/gemma-4-e4b',
         apiKey: localAiConfig.apiKey || DEFAULT_LMSTUDIO_API_KEY,
+        dockerOfflineEnabled: false,
       });
       setLocalAiTestResult(null);
       return;
@@ -161,8 +287,9 @@ export const TopControls: React.FC<TopControlsProps> = ({
         ...localAiConfig,
         enabled: true,
         provider: 'ollama',
-        endpoint: 'http://localhost:11434/v1',
+        endpoint: `http://${host === '172.30.115.239' ? host : 'localhost'}:11434/v1`,
         model: 'qwen3.8:27b',
+        dockerOfflineEnabled: false,
       });
       setLocalAiTestResult(null);
       return;
@@ -302,7 +429,15 @@ export const TopControls: React.FC<TopControlsProps> = ({
           >
             <Server className={`w-3.5 h-3.5 ${localAiConfig.enabled ? 'text-amber-600' : 'text-slate-400'}`} />
             <span className="hidden md:inline">Local AI:</span>
-            <span>{localAiConfig.enabled ? (localAiConfig.provider === 'lmstudio' ? 'LM Studio' : 'Ollama') : 'Guide'}</span>
+            <span>
+              {localAiConfig.enabled
+                ? localAiConfig.provider === 'docker' || localAiConfig.dockerOfflineEnabled
+                  ? '🐳 Docker Offline'
+                  : localAiConfig.provider === 'lmstudio'
+                  ? 'LM Studio'
+                  : 'Ollama'
+                : 'Guide'}
+            </span>
           </button>
 
           {/* Turn Counter Pill */}
@@ -692,32 +827,118 @@ export const TopControls: React.FC<TopControlsProps> = ({
 
                 {localAiConfig.enabled && (
                   <div className="mt-3 p-3.5 bg-slate-50 border border-slate-300 rounded-2xl space-y-3 animate-fadeIn">
+                    {/* LAN WiFi Host Selector */}
+                    <div className="bg-amber-50/90 border border-amber-300 rounded-xl p-3 space-y-2">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-amber-950">
+                          <Wifi className="w-4 h-4 text-amber-600 animate-pulse" />
+                          <span>Mạng WiFi / LAN kết nối máy chủ:</span>
+                        </div>
+                        <span className="text-[10px] font-mono text-amber-800 bg-amber-200/60 px-2 py-0.5 rounded font-semibold self-start sm:self-auto">
+                          Subnet: 172.30.0.0/16 · Gateway: 172.30.119.1
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => applyHostIp('172.30.115.239')}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs ${
+                            (localAiConfig.endpoint && localAiConfig.endpoint.includes('172.30.115.239')) || localAiConfig.lanHostIp === '172.30.115.239'
+                              ? 'bg-amber-600 text-white ring-2 ring-amber-400/40 shadow-amber-600/20'
+                              : 'bg-white hover:bg-amber-100 text-amber-900 border border-amber-300'
+                          }`}
+                        >
+                          <Radio className="w-3.5 h-3.5 text-amber-200" />
+                          <span>Máy chủ WiFi (172.30.115.239)</span>
+                          <span className="text-[10px] bg-black/10 px-1 py-0.2 rounded font-mono font-normal">Server</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => applyHostIp('localhost')}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs ${
+                            localAiConfig.endpoint && (localAiConfig.endpoint.includes('localhost') || localAiConfig.endpoint.includes('127.0.0.1')) && localAiConfig.lanHostIp !== '172.30.115.239'
+                              ? 'bg-slate-700 text-white ring-2 ring-slate-400/40'
+                              : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-300'
+                          }`}
+                        >
+                          <Cpu className="w-3.5 h-3.5 text-slate-400" />
+                          <span>Máy tính này: localhost</span>
+                        </button>
+                      </div>
+
+                      <p className="text-[11px] text-amber-900 leading-tight">
+                        💡 <strong>Học viên dùng Laptop:</strong> Bấm <strong>Máy chủ WiFi (172.30.115.239)</strong> để laptop kết nối trực tiếp đến Open WebUI (:8090) và Docker (:8000, :8081) trên máy chủ phòng học qua WiFi.
+                      </p>
+                    </div>
+
                     {/* Presets */}
                     <div>
                       <div className="text-[11px] font-bold text-slate-600 mb-1.5 flex items-center justify-between">
                         <span>Chọn máy chủ cục bộ nhanh:</span>
                         <span className="text-[10px] text-amber-700 font-semibold bg-amber-100 px-1.5 py-0.5 rounded">
-                          Hỗ trợ Qwen 27B, Ollama, LM Studio, vLLM
+                          Hỗ trợ Open WebUI, Docker, Qwen 27B, LM Studio, Ollama
                         </span>
                       </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                        {/* LM Studio Gemma (User's active local model) */}
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+                        {/* Open WebUI (:8090) */}
+                        <button
+                          type="button"
+                          onClick={() => applyLocalPreset('openwebui')}
+                          className={`p-2 rounded-xl border text-center text-xs font-bold transition-all cursor-pointer shadow-xs col-span-2 sm:col-span-1 ${
+                            localAiConfig.provider === 'openwebui'
+                              ? 'bg-gradient-to-r from-emerald-600 to-teal-700 text-white border-emerald-500 ring-2 ring-emerald-400/40'
+                              : 'bg-emerald-50 border-emerald-300 text-emerald-950 hover:bg-emerald-100'
+                          }`}
+                          title="Open WebUI Docker container (Port 8090) - Chuẩn OpenAI API"
+                        >
+                          <div className="flex items-center justify-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                            <span>🌐 Open WebUI</span>
+                          </div>
+                          <div className="text-[10px] font-mono opacity-85 mt-0.5">
+                            Port 8090
+                          </div>
+                        </button>
+
+                        {/* Docker Offline Suite */}
+                        <button
+                          type="button"
+                          onClick={() => applyLocalPreset('docker')}
+                          className={`p-2 rounded-xl border text-center text-xs font-bold transition-all cursor-pointer shadow-xs ${
+                            localAiConfig.provider === 'docker'
+                              ? 'bg-gradient-to-r from-blue-600 to-indigo-700 text-white border-blue-500 ring-2 ring-blue-400/40'
+                              : 'bg-blue-50 border-blue-200 text-blue-900 hover:bg-blue-100'
+                          }`}
+                          title="Docker Suite: faster-whisper (:8000) + localai-tts (:8081)"
+                        >
+                          <div className="flex items-center justify-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                            <span>🐳 Docker Suite</span>
+                          </div>
+                          <div className="text-[10px] font-mono opacity-85 mt-0.5">
+                            Port 8000 & 8081
+                          </div>
+                        </button>
+
+                        {/* LM Studio Gemma */}
                         <button
                           type="button"
                           onClick={() => applyLocalPreset('lmstudio')}
                           className={`p-2 rounded-xl border text-center text-xs font-bold transition-all cursor-pointer shadow-xs ${
                             localAiConfig.provider === 'lmstudio' && localAiConfig.model.includes('gemma')
                               ? 'bg-gradient-to-r from-red-600 to-amber-600 text-white border-red-500 ring-2 ring-amber-400/30'
-                              : 'bg-emerald-50 border-emerald-300 text-emerald-950 hover:bg-emerald-100'
+                              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
                           }`}
                           title="LM Studio đang chạy: google/gemma-4-e4b (Cổng 1234)"
                         >
                           <div className="flex items-center justify-center gap-1.5">
                             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                            <span>LM Studio (Gemma)</span>
+                            <span>LM Studio</span>
                           </div>
                           <div className="text-[10px] font-mono opacity-85 mt-0.5">
-                            Port 1234 · gemma-4-e4b
+                            Port 1234
                           </div>
                         </button>
 
@@ -731,7 +952,7 @@ export const TopControls: React.FC<TopControlsProps> = ({
                               : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
                           }`}
                         >
-                          <div>🔥 Qwen 27B Local</div>
+                          <div>🔥 Qwen 27B</div>
                           <div className="text-[10px] font-mono opacity-70 mt-0.5">Port 11434</div>
                         </button>
 
@@ -766,63 +987,228 @@ export const TopControls: React.FC<TopControlsProps> = ({
                     </div>
 
                     {/* Inputs */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-[11px] font-bold text-slate-700 mb-1 block">
-                          URL Endpoint Máy chủ Local:
-                        </label>
-                        <input
-                          type="text"
-                          value={localAiConfig.endpoint}
-                          onChange={(e) =>
-                            onUpdateLocalAiConfig({
-                              ...localAiConfig,
-                              endpoint: e.target.value,
-                            })
-                          }
-                          placeholder="http://localhost:1234/v1"
-                          className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
-                        />
-                        <span className="text-[10px] text-slate-500 mt-0.5 block">
-                          LM Studio mặc định: <strong className="text-emerald-700">http://localhost:1234/v1</strong>
-                        </span>
-                      </div>
+                    {localAiConfig.provider === 'openwebui' ? (
+                      <div className="space-y-3 bg-emerald-50/70 p-3.5 rounded-xl border border-emerald-300">
+                        <div className="flex items-center justify-between text-emerald-950 font-bold text-xs">
+                          <div className="flex items-center gap-2">
+                            <Globe className="w-4 h-4 text-emerald-600" />
+                            <span>🌐 Cấu hình Open WebUI (:8090) kết nối WiFi / LAN:</span>
+                          </div>
+                          <span className="text-[10px] font-mono text-emerald-700 bg-white px-2 py-0.5 rounded border border-emerald-200">
+                            OpenAI-Compatible
+                          </span>
+                        </div>
 
-                      <div>
-                        <label className="text-[11px] font-bold text-slate-700 mb-1 block">
-                          Tên Mô hình (Model Name):
-                        </label>
-                        <input
-                          type="text"
-                          value={localAiConfig.model}
-                          onChange={(e) =>
-                            onUpdateLocalAiConfig({
-                              ...localAiConfig,
-                              model: e.target.value,
-                            })
-                          }
-                          placeholder="google/gemma-4-e4b"
-                          className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
-                        />
-                        <div className="flex items-center gap-1 mt-1 flex-wrap">
-                          <span className="text-[10px] text-slate-500 font-medium">Chọn nhanh:</span>
-                          {['google/gemma-4-e4b', 'google/gemma-4-e4b:2', 'qwen3.8:27b', 'qwen2.5:27b', 'qwen2.5:3b'].map((m) => (
-                            <button
-                              key={m}
-                              type="button"
-                              onClick={() => onUpdateLocalAiConfig({ ...localAiConfig, model: m })}
-                              className={`text-[10px] font-mono px-1.5 py-0.5 rounded cursor-pointer transition-colors ${
-                                localAiConfig.model === m
-                                  ? 'bg-red-600 text-white font-bold'
-                                  : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-300'
-                              }`}
-                            >
-                              {m}
-                            </button>
-                          ))}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-[11px] font-bold text-slate-700 mb-1 block">
+                              1. Open WebUI Endpoint (Port 8090):
+                            </label>
+                            <input
+                              type="text"
+                              value={localAiConfig.endpoint}
+                              onChange={(e) =>
+                                onUpdateLocalAiConfig({
+                                  ...localAiConfig,
+                                  endpoint: e.target.value,
+                                })
+                              }
+                              placeholder="http://172.30.115.239:8090/api"
+                              className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                            />
+                            <span className="text-[10px] text-slate-500 mt-0.5 block">
+                              Endpoint API: <strong>/api</strong> hoặc <strong>/v1</strong> trên máy chủ 8090
+                            </span>
+                          </div>
+
+                          <div>
+                            <label className="text-[11px] font-bold text-slate-700 mb-1 block">
+                              2. Tên Model trong Open WebUI:
+                            </label>
+                            <input
+                              type="text"
+                              value={localAiConfig.model}
+                              onChange={(e) =>
+                                onUpdateLocalAiConfig({
+                                  ...localAiConfig,
+                                  model: e.target.value,
+                                })
+                              }
+                              placeholder="google/gemma-4-e4b"
+                              className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                            />
+                            <div className="flex items-center gap-1 mt-1 flex-wrap">
+                              <span className="text-[10px] text-slate-500 font-medium">Gợi ý:</span>
+                              {['google/gemma-4-e4b', 'qwen2.5:3b', 'qwen3.8:27b', 'llama3'].map((m) => (
+                                <button
+                                  key={m}
+                                  type="button"
+                                  onClick={() => onUpdateLocalAiConfig({ ...localAiConfig, model: m })}
+                                  className={`text-[10px] font-mono px-1.5 py-0.5 rounded cursor-pointer transition-colors ${
+                                    localAiConfig.model === m
+                                      ? 'bg-emerald-600 text-white font-bold'
+                                      : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-300'
+                                  }`}
+                                >
+                                  {m}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="text-[11px] font-bold text-slate-700 mb-1 block">
+                              3. Faster-Whisper STT (Port 8000):
+                            </label>
+                            <input
+                              type="text"
+                              value={localAiConfig.whisperEndpoint || (localAiConfig.lanHostIp ? `http://${localAiConfig.lanHostIp}:8000/v1` : 'http://172.30.115.239:8000/v1')}
+                              onChange={(e) =>
+                                onUpdateLocalAiConfig({
+                                  ...localAiConfig,
+                                  whisperEndpoint: e.target.value,
+                                })
+                              }
+                              placeholder="http://172.30.115.239:8000/v1"
+                              className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                            />
+                            <span className="text-[10px] text-slate-500 mt-0.5 block">
+                              Nhận diện giọng nói STT chuẩn OpenAI (/audio/transcriptions)
+                            </span>
+                          </div>
+
+                          <div>
+                            <label className="text-[11px] font-bold text-slate-700 mb-1 block">
+                              4. LocalAI TTS Voice (Port 8081):
+                            </label>
+                            <input
+                              type="text"
+                              value={localAiConfig.localAiTtsEndpoint || (localAiConfig.lanHostIp ? `http://${localAiConfig.lanHostIp}:8081/v1` : 'http://172.30.115.239:8081/v1')}
+                              onChange={(e) =>
+                                onUpdateLocalAiConfig({
+                                  ...localAiConfig,
+                                  localAiTtsEndpoint: e.target.value,
+                                })
+                              }
+                              placeholder="http://172.30.115.239:8081/v1"
+                              className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                            />
+                            <span className="text-[10px] text-slate-500 mt-0.5 block">
+                              Phát âm đàm thoại ICAO (/audio/speech)
+                            </span>
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    ) : localAiConfig.provider === 'docker' || localAiConfig.dockerOfflineEnabled ? (
+                      <div className="space-y-3 bg-blue-50/60 p-3.5 rounded-xl border border-blue-200">
+                        <div className="flex items-center gap-2 text-blue-900 font-bold text-xs">
+                          <span>🐳 Cấu hình Docker Offline Containers:</span>
+                          <span className="text-[10px] font-normal text-blue-700">(Chạy ngầm trên máy chủ/máy trạm)</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-[11px] font-bold text-slate-700 mb-1 block">
+                              1. Faster-Whisper STT (Port 8000):
+                            </label>
+                            <input
+                              type="text"
+                              value={localAiConfig.whisperEndpoint || (localAiConfig.lanHostIp ? `http://${localAiConfig.lanHostIp}:8000/v1` : 'http://localhost:8000/v1')}
+                              onChange={(e) =>
+                                onUpdateLocalAiConfig({
+                                  ...localAiConfig,
+                                  whisperEndpoint: e.target.value,
+                                })
+                              }
+                              placeholder="http://172.30.115.239:8000/v1"
+                              className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                            />
+                            <span className="text-[10px] text-slate-500 mt-0.5 block">
+                              Nhận diện giọng nói chuẩn OpenAI STT (/audio/transcriptions)
+                            </span>
+                          </div>
+
+                          <div>
+                            <label className="text-[11px] font-bold text-slate-700 mb-1 block">
+                              2. LocalAI TTS & LLM (Port 8081):
+                            </label>
+                            <input
+                              type="text"
+                              value={localAiConfig.localAiTtsEndpoint || (localAiConfig.lanHostIp ? `http://${localAiConfig.lanHostIp}:8081/v1` : 'http://localhost:8081/v1')}
+                              onChange={(e) =>
+                                onUpdateLocalAiConfig({
+                                  ...localAiConfig,
+                                  localAiTtsEndpoint: e.target.value,
+                                  endpoint: e.target.value,
+                                })
+                              }
+                              placeholder="http://172.30.115.239:8081/v1"
+                              className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                            />
+                            <span className="text-[10px] text-slate-500 mt-0.5 block">
+                              Tạo giọng nói AI (/audio/speech) & Chấm điểm ICAO
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[11px] font-bold text-slate-700 mb-1 block">
+                            URL Endpoint Máy chủ Local:
+                          </label>
+                          <input
+                            type="text"
+                            value={localAiConfig.endpoint}
+                            onChange={(e) =>
+                              onUpdateLocalAiConfig({
+                                ...localAiConfig,
+                                endpoint: e.target.value,
+                              })
+                            }
+                            placeholder="http://localhost:1234/v1"
+                            className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
+                          />
+                          <span className="text-[10px] text-slate-500 mt-0.5 block">
+                            LM Studio: <strong className="text-emerald-700">http://localhost:1234/v1</strong>
+                          </span>
+                        </div>
+
+                        <div>
+                          <label className="text-[11px] font-bold text-slate-700 mb-1 block">
+                            Tên Mô hình (Model Name):
+                          </label>
+                          <input
+                            type="text"
+                            value={localAiConfig.model}
+                            onChange={(e) =>
+                              onUpdateLocalAiConfig({
+                                ...localAiConfig,
+                                model: e.target.value,
+                              })
+                            }
+                            placeholder="google/gemma-4-e4b"
+                            className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
+                          />
+                          <div className="flex items-center gap-1 mt-1 flex-wrap">
+                            <span className="text-[10px] text-slate-500 font-medium">Chọn nhanh:</span>
+                            {['google/gemma-4-e4b', 'google/gemma-4-e4b:2', 'qwen3.8:27b', 'qwen2.5:27b', 'qwen2.5:3b'].map((m) => (
+                              <button
+                                key={m}
+                                type="button"
+                                onClick={() => onUpdateLocalAiConfig({ ...localAiConfig, model: m })}
+                                className={`text-[10px] font-mono px-1.5 py-0.5 rounded cursor-pointer transition-colors ${
+                                  localAiConfig.model === m
+                                    ? 'bg-red-600 text-white font-bold'
+                                    : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-300'
+                                }`}
+                              >
+                                {m}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     <div className="flex items-center justify-between gap-3 pt-1">
                       <div className="flex-1">
@@ -947,6 +1333,25 @@ export const TopControls: React.FC<TopControlsProps> = ({
                     </div>
                   </div>
                 )}
+              </div>
+
+              {/* 8. Báo cáo & Xuất PDF */}
+              <div className="pt-2 border-t border-slate-100">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-2 flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-red-600" />
+                  <span>8. Báo cáo & Xuất PDF đàm thoại</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActivePanel(null);
+                    onOpenReport();
+                  }}
+                  className="w-full py-3 px-4 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer"
+                >
+                  <FileText className="w-4 h-4" />
+                  <span>Save Report (Lưu báo cáo & Xuất PDF)</span>
+                </button>
               </div>
             </div>
 

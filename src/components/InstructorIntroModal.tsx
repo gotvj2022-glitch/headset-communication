@@ -51,28 +51,22 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
   const [selectedLevel, setSelectedLevel] = useState<StudentLevel>(currentStudentLevel);
   const [selectedRole, setSelectedRole] = useState<UserRole>(currentUserRole);
 
-  const [isPlayingAudio, setIsPlayingAudio] = useState<boolean>(true);
-  const [isAudioMuted, setIsAudioMuted] = useState<boolean>(false);
-  const [audioProgress, setAudioProgress] = useState<number>(0);
-  const [audioDuration, setAudioDuration] = useState<number>(0);
+  const [isPlaying, setIsPlaying] = useState<boolean>(true);
+  const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [progress, setProgress] = useState<number>(0);
+  const [duration, setDuration] = useState<number>(0);
 
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   // ===== Số lần phát clip giáo viên =====
-  const MAX_PLAYS = 5; // đổi số này nếu muốn phát nhiều/ít lần hơn
-  const CLIP_END_SECONDS = 9.2; // mốc kết thúc lời chào (giây)
+  const MAX_PLAYS = 5;
   const playCountRef = useRef<number>(1);
   const [playCount, setPlayCount] = useState<number>(1);
 
   const restartClip = () => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = 0;
-      audioRef.current.play().then(() => setIsPlayingAudio(true)).catch(() => {});
-    }
     if (videoRef.current) {
       videoRef.current.currentTime = 0;
-      videoRef.current.play().catch(() => {});
+      videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
     }
   };
 
@@ -90,31 +84,25 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
       setSelectedRole(currentUserRole);
       resetPlayCount();
 
-      // Attempt autoplay audio and video
+      // Attempt autoplay video with sound enabled
       if (videoRef.current) {
         videoRef.current.currentTime = 0;
-        videoRef.current.play().catch(() => {});
-      }
-      if (audioRef.current) {
-        audioRef.current.currentTime = 0;
-        const playPromise = audioRef.current.play();
+        videoRef.current.muted = false;
+        const playPromise = videoRef.current.play();
         if (playPromise !== undefined) {
           playPromise
-            .then(() => setIsPlayingAudio(true))
+            .then(() => setIsPlaying(true))
             .catch((err) => {
               console.log('[InstructorIntro] Autoplay prevented by browser:', err);
-              setIsPlayingAudio(false);
+              setIsPlaying(false);
             });
         }
       }
     } else {
-      // Pause audio and video when modal is closed
-      if (audioRef.current) {
-        audioRef.current.pause();
-        setIsPlayingAudio(false);
-      }
+      // Pause video when modal is closed
       if (videoRef.current) {
         videoRef.current.pause();
+        setIsPlaying(false);
       }
     }
   }, [isOpen, currentScenario.id, currentPracticeMode, currentStudentLevel, currentUserRole]);
@@ -122,8 +110,8 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
   // Phát clip giáo viên MAX_PLAYS lần rồi dừng
   useEffect(() => {
     if (!isOpen) return;
-    const audio = audioRef.current;
-    if (!audio) return;
+    const video = videoRef.current;
+    if (!video) return;
 
     const finishOneRound = () => {
       if (playCountRef.current < MAX_PLAYS) {
@@ -131,76 +119,62 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
         setPlayCount(playCountRef.current);
         restartClip();
       } else {
-        audio.pause();
-        setIsPlayingAudio(false);
-        if (videoRef.current) videoRef.current.pause();
+        video.pause();
+        setIsPlaying(false);
       }
     };
 
     const handleTimeUpdate = () => {
-      setAudioProgress(audio.currentTime);
-      if (audio.currentTime >= CLIP_END_SECONDS && !audio.paused) {
-        finishOneRound();
-      }
+      setProgress(video.currentTime);
     };
     const handleLoadedMetadata = () => {
-      setAudioDuration(audio.duration || 0);
+      setDuration(video.duration || 0);
     };
     const handleEnded = () => {
-      // trường hợp file âm thanh ngắn hơn CLIP_END_SECONDS
       finishOneRound();
     };
 
-    audio.addEventListener('timeupdate', handleTimeUpdate);
-    audio.addEventListener('loadedmetadata', handleLoadedMetadata);
-    audio.addEventListener('ended', handleEnded);
+    video.addEventListener('timeupdate', handleTimeUpdate);
+    video.addEventListener('loadedmetadata', handleLoadedMetadata);
+    video.addEventListener('ended', handleEnded);
 
     return () => {
-      audio.removeEventListener('timeupdate', handleTimeUpdate);
-      audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
-      audio.removeEventListener('ended', handleEnded);
+      video.removeEventListener('timeupdate', handleTimeUpdate);
+      video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      video.removeEventListener('ended', handleEnded);
     };
   }, [isOpen]);
 
-  const togglePlayAudio = () => {
-    if (!audioRef.current) return;
-    if (isPlayingAudio) {
-      audioRef.current.pause();
-      setIsPlayingAudio(false);
-      if (videoRef.current) videoRef.current.pause();
+  const togglePlay = () => {
+    if (!videoRef.current) return;
+    if (isPlaying) {
+      videoRef.current.pause();
+      setIsPlaying(false);
     } else {
-      if (videoRef.current) {
-        if (audioRef.current.currentTime >= 9.0) {
-          resetPlayCount();
-          videoRef.current.currentTime = 0;
-          audioRef.current.currentTime = 0;
-        }
-        videoRef.current.play().catch(() => {});
+      if (videoRef.current.currentTime >= (duration || 9) - 0.5) {
+        resetPlayCount();
+        videoRef.current.currentTime = 0;
       }
-      audioRef.current.play().then(() => setIsPlayingAudio(true)).catch(() => {});
+      videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
     }
   };
 
-  const replayAudio = () => {
-    if (!audioRef.current) return;
+  const replayClip = () => {
+    if (!videoRef.current) return;
     resetPlayCount();
-    audioRef.current.currentTime = 0;
-    if (videoRef.current) {
-      videoRef.current.currentTime = 0;
-      videoRef.current.play().catch(() => {});
-    }
-    audioRef.current.play().then(() => setIsPlayingAudio(true)).catch(() => {});
+    videoRef.current.currentTime = 0;
+    videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
   };
 
   const toggleMute = () => {
-    if (!audioRef.current) return;
-    audioRef.current.muted = !isAudioMuted;
-    setIsAudioMuted(!isAudioMuted);
+    if (!videoRef.current) return;
+    videoRef.current.muted = !isMuted;
+    setIsMuted(!isMuted);
   };
 
   const handleConfirmStart = () => {
-    if (audioRef.current) {
-      audioRef.current.pause();
+    if (videoRef.current) {
+      videoRef.current.pause();
     }
     const targetScenario = SCENARIOS.find((s) => s.id === selectedScenarioId) || currentScenario;
     onStartTraining({
@@ -214,18 +188,9 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
 
   if (!isOpen) return null;
 
-  const chosenScenario = SCENARIOS.find((s) => s.id === selectedScenarioId) || SCENARIOS[0];
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-950/80 backdrop-blur-md animate-fadeIn overflow-y-auto">
-      {/* Hidden audio element playing the WAV file */}
-      <audio
-        ref={audioRef}
-        src="/assets/aistudio/Generated_Audio_November_02__2026_-_2_52PM_d5fb7c4f.wav"
-        preload="auto"
-      />
-
-      <div className="relative w-full max-w-5xl max-h-[92vh] flex flex-col bg-white rounded-3xl shadow-2xl border border-red-200 overflow-hidden text-slate-800">
+      <div className="relative w-full max-w-5xl max-h-[96vh] flex flex-col bg-white rounded-3xl shadow-2xl border border-red-200 overflow-hidden text-slate-800">
         
         {/* Top Header Banner */}
         <div className="bg-gradient-to-r from-red-600 via-rose-700 to-amber-600 px-6 py-4 text-white flex items-center justify-between shrink-0 shadow-md">
@@ -258,10 +223,10 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
           </div>
         </div>
 
-        {/* Modal Body: Split Layout (Instructor Video & Audio on Left, Menu Options on Right) */}
+        {/* Modal Body: Split Layout */}
         <div className="flex-1 overflow-y-auto grid grid-cols-1 lg:grid-cols-12 gap-0 divide-y lg:divide-y-0 lg:divide-x divide-slate-200">
           
-          {/* LEFT COLUMN: Instructor Video & Voice Player (5 cols) */}
+          {/* LEFT COLUMN: Instructor Video & Sound Player (5 cols) */}
           <div className="lg:col-span-5 p-5 sm:p-6 bg-gradient-to-b from-slate-50 via-white to-red-50/30 flex flex-col justify-between">
             <div>
               {/* Instructor Badge */}
@@ -276,31 +241,30 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
                   </span>
                 </div>
                 <span className="text-[11px] font-medium text-slate-500 bg-white px-2.5 py-0.5 rounded-full border border-slate-200 shadow-2xs">
-                  AI Tutor 24/7
+                  Video Lời Chào
                 </span>
               </div>
 
-              {/* Video Player Box with Balanced Sizing */}
-              <div className="relative aspect-4/3 w-full rounded-2xl overflow-hidden border-2 border-red-500/80 bg-slate-900 shadow-lg group">
+              {/* New Video Player with Built-in Audio */}
+              <div className="relative aspect-[3/4] w-full max-h-[460px] rounded-2xl overflow-hidden border-2 border-red-500/80 bg-slate-900 shadow-lg group">
                 <video
                   ref={videoRef}
-                  src="/assets/aistudio/instructor_aef09d80.mp4"
+                  src="/assets/aistudio/ezgif-1abce10e21de4242_a13e1f70.mp4"
                   autoPlay
-                  muted
                   playsInline
                   className="w-full h-full object-cover object-center"
                 />
 
-                {/* Overlay live speaking tag */}
+                {/* Overlay status tag */}
                 <div className="absolute top-2.5 left-2.5 px-2.5 py-1 rounded-full bg-slate-950/70 backdrop-blur-md border border-white/20 text-white flex items-center gap-1.5">
-                  <Volume2 className={`w-3.5 h-3.5 text-amber-400 ${isPlayingAudio ? 'animate-pulse' : ''}`} />
+                  <Volume2 className={`w-3.5 h-3.5 text-amber-400 ${isPlaying ? 'animate-pulse' : ''}`} />
                   <span className="text-[10px] font-mono font-bold">
-                    {isPlayingAudio ? `ĐANG PHÁT LỜI CHÀO... (${playCount}/${MAX_PLAYS})` : 'TẠM DỪNG'}
+                    {isPlaying ? `ĐANG PHÁT CLIP... (${playCount}/${MAX_PLAYS})` : 'TẠM DỪNG'}
                   </span>
                 </div>
 
                 {/* Visual sound waves if playing */}
-                {isPlayingAudio && (
+                {isPlaying && (
                   <div className="absolute bottom-2.5 right-2.5 flex items-end gap-1 px-2 py-1 rounded-lg bg-black/60 backdrop-blur-xs">
                     <span className="w-1 h-3 bg-amber-400 rounded-full animate-bounce" />
                     <span className="w-1 h-5 bg-amber-400 rounded-full animate-bounce [animation-delay:150ms]" />
@@ -310,23 +274,23 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
                 )}
               </div>
 
-              {/* Audio Controls Bar */}
+              {/* Video Controls Bar */}
               <div className="mt-3 p-3 bg-white rounded-2xl border border-red-100 shadow-xs">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={togglePlayAudio}
+                      onClick={togglePlay}
                       className="w-8 h-8 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center shadow-xs transition-transform active:scale-95 cursor-pointer"
-                      title={isPlayingAudio ? 'Tạm dừng giọng đọc' : 'Phát giọng đọc'}
+                      title={isPlaying ? 'Tạm dừng clip' : 'Phát clip'}
                     >
-                      {isPlayingAudio ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                      {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
                     </button>
                     <button
                       type="button"
-                      onClick={replayAudio}
+                      onClick={replayClip}
                       className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center transition-transform active:scale-95 cursor-pointer"
-                      title="Nghe lại từ đầu"
+                      title="Phát lại từ đầu"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
                     </button>
@@ -334,14 +298,14 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
                       type="button"
                       onClick={toggleMute}
                       className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center transition-transform active:scale-95 cursor-pointer"
-                      title={isAudioMuted ? 'Bật âm thanh' : 'Tắt âm thanh'}
+                      title={isMuted ? 'Bật âm thanh' : 'Tắt âm thanh'}
                     >
-                      {isAudioMuted ? <VolumeX className="w-3.5 h-3.5 text-red-500" /> : <Volume2 className="w-3.5 h-3.5" />}
+                      {isMuted ? <VolumeX className="w-3.5 h-3.5 text-red-500" /> : <Volume2 className="w-3.5 h-3.5" />}
                     </button>
                   </div>
 
                   <span className="text-[11px] font-mono text-slate-500 font-semibold">
-                    {Math.floor(audioProgress)}s / {audioDuration ? Math.floor(audioDuration) : 10}s
+                    {Math.floor(progress)}s / {duration ? Math.floor(duration) : 10}s
                   </span>
                 </div>
 
@@ -350,7 +314,7 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
                   <div
                     className="bg-red-600 h-full rounded-full transition-all duration-200"
                     style={{
-                      width: `${audioDuration > 0 ? (audioProgress / audioDuration) * 100 : isPlayingAudio ? 50 : 0}%`,
+                      width: `${duration > 0 ? (progress / duration) * 100 : isPlaying ? 50 : 0}%`,
                     }}
                   />
                 </div>
@@ -388,7 +352,6 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
               </label>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                {/* Kịch bản chuẩn */}
                 <button
                   type="button"
                   onClick={() => setSelectedMode('scenario')}
@@ -406,7 +369,6 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
                   <span className="font-bold text-xs text-slate-900">Kịch bản chuẩn</span>
                 </button>
 
-                {/* Đối thoại tự do */}
                 <button
                   type="button"
                   onClick={() => setSelectedMode('free')}
@@ -424,7 +386,6 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
                   <span className="font-bold text-xs text-slate-900">Đối thoại tự do</span>
                 </button>
 
-                {/* Kiểm tra quá trình */}
                 <button
                   type="button"
                   onClick={() => setSelectedMode('exam')}
@@ -454,7 +415,6 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
               </label>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                {/* Level 1: Beginner */}
                 <button
                   type="button"
                   onClick={() => setSelectedLevel('beginner')}
@@ -472,7 +432,6 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
                   <span className="font-bold text-xs text-slate-900">Mức 1: Cơ bản (&gt;30%)</span>
                 </button>
 
-                {/* Level 2: Intermediate */}
                 <button
                   type="button"
                   onClick={() => setSelectedLevel('intermediate')}
@@ -490,7 +449,6 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
                   <span className="font-bold text-xs text-slate-900">Mức 2: Tiêu chuẩn (&gt;50%)</span>
                 </button>
 
-                {/* Level 3: Advanced */}
                 <button
                   type="button"
                   onClick={() => setSelectedLevel('advanced')}
@@ -519,7 +477,6 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
                 Tình huống bài học
               </label>
 
-              {/* Scenario Selector Dropdown */}
               <div className="relative">
                 <select
                   value={selectedScenarioId}
@@ -548,7 +505,6 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
               </label>
 
               <div className="grid grid-cols-2 gap-3">
-                {/* Headset Man */}
                 <button
                   type="button"
                   onClick={() => setSelectedRole('Ground')}
@@ -571,7 +527,6 @@ export const InstructorIntroModal: React.FC<InstructorIntroModalProps> = ({
                   )}
                 </button>
 
-                {/* Cockpit */}
                 <button
                   type="button"
                   onClick={() => setSelectedRole('Cockpit')}

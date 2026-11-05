@@ -73,7 +73,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
           <span className="font-mono font-black text-red-600 tracking-wider text-base">VIAA</span>
         </div>
         <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider bg-white/80 border border-slate-200 px-2.5 py-1 rounded-full shadow-2xs">
-          Aviation Portal
+          Aviation Portal · v2.2
         </span>
       </div>
 
@@ -220,7 +220,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
           {/* Footer security badge */}
           <div className="px-6 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-center gap-2 text-xs text-slate-500 font-medium">
             <ShieldCheck className="w-4 h-4 text-emerald-600" />
-            <span className="font-semibold text-slate-600">A project from VIAA-GOT with AIstudio</span>
+            <span className="font-semibold text-slate-600">Project Manager: Mr. Nguyễn Tuấn Anh - Willis</span>
           </div>
         </div>
       </div>

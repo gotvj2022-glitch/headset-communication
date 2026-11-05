@@ -1,6 +1,6 @@
 {
-  "summary": "Kế hoạch nâng cấp và tái cấu trúc hệ thống Speech-to-Text (STT) theo cơ chế hiện đại kết hợp song song Web Speech API và Gemini Flash Audio, tối ưu hóa nhận diện ngữ âm tiếng Anh phi bản xứ cho học viên hàng không VIAA.",
-  "updatedAt": "2026-11-03T00:52:34.716606394Z",
+  "summary": "Kế hoạch tích hợp Docker Offline Suite (faster-whisper:8000 cho STT, localai-tts:8081 cho TTS và chấm điểm) vào Menu Local AI của hệ thống AeroComms VIAA.",
+  "updatedAt": "2026-11-04T06:01:41.049766961Z",
   "requestFeedback": true,
   "userFacing": true
 }

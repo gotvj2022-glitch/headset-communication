@@ -1,0 +1,112 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    background-color: #f8fafc;
+    color: #0f172a;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+/* Light aviation runway static pattern */
+.radio-static-bg {
+  background-color: #ffffff;
+  background-image: radial-gradient(rgba(225, 29, 72, 0.04) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* Clean scrollbar for light theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f8fafc;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+  border: 2px solid #f8fafc;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Karaoke strikethrough animation */
+.karaoke-completed {
+  text-decoration: line-through;
+  text-decoration-color: #dc2626;
+  text-decoration-thickness: 2.5px;
+  opacity: 0.5;
+  transition: all 0.3s ease-in-out;
+}
+
+/* Animated Avatar Keyframes */
+@keyframes avatarFloat {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes avatarGlow {
+  0%, 100% {
+    box-shadow: 0 4px 12px 0 rgba(220, 38, 38, 0.15);
+  }
+  50% {
+    box-shadow: 0 6px 20px 0 rgba(220, 38, 38, 0.35);
+  }
+}
+
+@keyframes avatarUserGlow {
+  0%, 100% {
+    box-shadow: 0 4px 12px 0 rgba(245, 158, 11, 0.15);
+  }
+  50% {
+    box-shadow: 0 6px 20px 0 rgba(245, 158, 11, 0.35);
+  }
+}
+
+.animate-avatar-float {
+  animation: avatarFloat 3.2s ease-in-out infinite;
+}
+
+.animate-avatar-glow {
+  animation: avatarGlow 2.8s ease-in-out infinite;
+}
+
+.animate-avatar-user-glow {
+  animation: avatarUserGlow 2.8s ease-in-out infinite;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .fixed, .fixed * {
+    visibility: visible;
+  }
+  .fixed {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: auto;
+    background: white !important;
+  }
+  .print\:hidden {
+    display: none !important;
+  }
+}
+

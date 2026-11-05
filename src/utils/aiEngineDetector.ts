@@ -4,7 +4,7 @@ export const DEFAULT_LMSTUDIO_API_KEY = 'lms-sk-mogsZrILq30R1EUfjaGjo7Xt6kUDfZ-_
 
 export interface DetectionResult {
   preferredEngine: 'local' | 'cloud';
-  provider?: 'lmstudio' | 'ollama' | 'vllm';
+  provider?: 'docker' | 'lmstudio' | 'ollama' | 'vllm';
   endpoint?: string;
   model?: string;
   apiKey?: string;
@@ -14,12 +14,35 @@ export interface DetectionResult {
 }
 
 /**
- * Probes local AI servers (LM Studio & Ollama) upon login or manual trigger.
+ * Probes local AI servers (Docker Suite, LM Studio & Ollama) upon login or manual trigger.
  * If a local server is responsive and online, prioritizes Local AI for zero-cloud latency.
  * Otherwise, seamlessly defaults to Gemini 3.1 Flash Lite cloud API for maximum speed.
  */
 export async function detectBestAiEngine(currentConfig?: LocalAiConfig): Promise<DetectionResult> {
   const defaultKey = currentConfig?.apiKey || DEFAULT_LMSTUDIO_API_KEY;
+
+  // Candidate 0: Docker Offline Suite (Faster-Whisper on 8000, LocalAI on 8081)
+  const dockerStartTime = Date.now();
+  try {
+    const whisperCheck = fetch('http://localhost:8000/v1/models', { signal: AbortSignal.timeout(1200) }).catch(() => null);
+    const localAiCheck = fetch('http://localhost:8081/v1/models', { signal: AbortSignal.timeout(1200) }).catch(() => null);
+    const [wResp, lResp] = await Promise.all([whisperCheck, localAiCheck]);
+
+    if ((wResp && (wResp.ok || wResp.status === 404)) || (lResp && lResp.ok)) {
+      const latencyMs = Date.now() - dockerStartTime;
+      return {
+        preferredEngine: 'local',
+        provider: 'docker',
+        endpoint: 'http://localhost:8081/v1',
+        model: 'localai',
+        apiKey: '',
+        latencyMs,
+        message: `Phát hiện Docker Offline Suite (Faster-Whisper :8000 + LocalAI :8081) đang chạy! Đã tự động kích hoạt chế độ Offline siêu tốc (${latencyMs}ms).`,
+      };
+    }
+  } catch {
+    // Docker offline probe
+  }
 
   // Candidate 1: LM Studio (Port 1234)
   const lmsEndpoint = 'http://localhost:1234/v1';

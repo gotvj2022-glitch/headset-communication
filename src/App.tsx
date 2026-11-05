@@ -16,8 +16,10 @@ import { ProwordGlossaryModal } from './components/ProwordGlossaryModal';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { LoginPage, UserSession } from './components/LoginPage';
 import { InstructorIntroModal } from './components/InstructorIntroModal';
+import { ReportModal } from './components/ReportModal';
 import { playWavAudio, speakWithBrowserTts, playAudioFileUrl, getStaticScriptedAudioUrl } from './utils/audioPlayer';
 import { DEFAULT_LMSTUDIO_API_KEY, detectBestAiEngine, DetectionResult } from './utils/aiEngineDetector';
+import { transcribeWithFasterWhisper, synthesizeWithLocalAiTts, evaluateWithLocalDocker } from './utils/dockerAiClient';
 import { RefreshCw, X, Zap } from 'lucide-react';
 
 export default function App() {
@@ -53,6 +55,8 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (!parsed.apiKey) parsed.apiKey = DEFAULT_LMSTUDIO_API_KEY;
+        if (!parsed.lanHostIp) parsed.lanHostIp = '172.30.115.239';
+        if (!parsed.openWebUiEndpoint) parsed.openWebUiEndpoint = 'http://172.30.115.239:8090/api';
         return parsed;
       }
       return {
@@ -62,6 +66,8 @@ export default function App() {
         model: 'google/gemma-4-e4b',
         apiKey: DEFAULT_LMSTUDIO_API_KEY,
         temperature: 0.1,
+        lanHostIp: '172.30.115.239',
+        openWebUiEndpoint: 'http://172.30.115.239:8090/api',
       };
     } catch {
       return {
@@ -71,6 +77,8 @@ export default function App() {
         model: 'google/gemma-4-e4b',
         apiKey: DEFAULT_LMSTUDIO_API_KEY,
         temperature: 0.1,
+        lanHostIp: '172.30.115.239',
+        openWebUiEndpoint: 'http://172.30.115.239:8090/api',
       };
     }
   });
@@ -147,6 +155,7 @@ export default function App() {
 
   // Instructor Introduction & Setup Modal state (shown immediately after login)
   const [isInstructorIntroOpen, setIsInstructorIntroOpen] = useState<boolean>(false);
+  const [isReportModalOpen, setIsReportModalOpen] = useState<boolean>(false);
 
   const handleLoginSuccess = (session: UserSession) => {
     setCurrentUser(session);
@@ -189,6 +198,8 @@ export default function App() {
   const [presetInputText, setPresetInputText] = useState<string>('');
   const [lastTranscribedText, setLastTranscribedText] = useState<string>('');
   const [pendingRetryTurn, setPendingRetryTurn] = useState<boolean>(false);
+  const [turnRetryCount, setTurnRetryCount] = useState<number>(0);
+  const [isExamSkipModalOpen, setIsExamSkipModalOpen] = useState<boolean>(false);
 
   // Client-side TTS cache: Map<`${speaker}:${text}`, { audioBase64: string | null; useBrowserFallback: boolean }>
   const ttsAudioCache = useRef<Map<string, { audioBase64: string | null; useBrowserFallback: boolean }>>(new Map());
@@ -308,6 +319,26 @@ export default function App() {
         }
       }
 
+      // If Docker Offline mode or Open WebUI is enabled, synthesize voice with localai-tts (:8081)
+      if (localAiConfig.enabled && (localAiConfig.provider === 'docker' || localAiConfig.provider === 'openwebui' || localAiConfig.dockerOfflineEnabled)) {
+        try {
+          const ttsUrl = localAiConfig.localAiTtsEndpoint || (localAiConfig.lanHostIp ? `http://${localAiConfig.lanHostIp}:8081/v1` : 'http://localhost:8081/v1');
+          const dockerTts = await synthesizeWithLocalAiTts(
+            text,
+            speaker,
+            ttsUrl,
+            localAiConfig.localAiTtsVoice
+          );
+          if (dockerTts.audioBase64) {
+            ttsAudioCache.current.set(cacheKey, { audioBase64: dockerTts.audioBase64, useBrowserFallback: false });
+            await playWavAudio(dockerTts.audioBase64);
+            return;
+          }
+        } catch (dockerTtsErr) {
+          console.warn('[Docker TTS notice - falling back to cloud TTS]:', dockerTtsErr);
+        }
+      }
+
       const response = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -341,6 +372,7 @@ export default function App() {
       setIsEvaluating(false);
       setPendingRetryTurn(false);
       setPresetInputText('');
+      setTurnRetryCount(0);
 
       const firstPair = scenario.dialoguePairs[0];
       if (!firstPair) return;
@@ -367,6 +399,18 @@ export default function App() {
           setMessages([aiMsg]);
           await playAiVoice(aiTurn.text, aiRole);
         }, 600);
+      } else if ((mode === 'scenario' || mode === 'exam') && firstPair.expectedInitiator === role) {
+        const studentTurn = role === 'Ground' ? firstPair.groundTurn : firstPair.cockpitTurn;
+        const initMsg: ChatMessage = {
+          id: `msg-${Date.now()}-init`,
+          sender: aiRole,
+          isUser: false,
+          text: `[BẮT ĐẦU TÌNH HUỐNG] ${scenario.title}. Bạn đóng vai ${role}. Vui lòng phát biểu lượt đầu tiên (Cặp #1): "${studentTurn.text}"`,
+          vietnamese: studentTurn.vietnamese,
+          timestamp: Date.now(),
+          pairIndex: 1,
+        };
+        setMessages([initMsg]);
       }
     },
     [voiceEnabled, practiceMode]
@@ -409,6 +453,29 @@ export default function App() {
     let evaluation: EvaluationResult | undefined = undefined;
     let evalLatencyMs = 0;
 
+    let activeSpoken = trimmedSpoken;
+
+    // If Docker Offline mode or Open WebUI is enabled and user sent audio, transcribe via Faster-Whisper (:8000)
+    if (audioBase64 && localAiConfig.enabled && (localAiConfig.provider === 'docker' || localAiConfig.provider === 'openwebui' || localAiConfig.dockerOfflineEnabled)) {
+      try {
+        const whisperUrl = localAiConfig.whisperEndpoint || (localAiConfig.lanHostIp ? `http://${localAiConfig.lanHostIp}:8000/v1` : 'http://localhost:8000/v1');
+        const whisperRes = await transcribeWithFasterWhisper(
+          audioBase64,
+          mimeType || 'audio/webm',
+          whisperUrl,
+          localAiConfig.whisperModel
+        );
+        if (whisperRes.text) {
+          activeSpoken = whisperRes.text;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === userMsgId ? { ...m, text: activeSpoken } : m))
+          );
+        }
+      } catch (whisperErr) {
+        console.warn('[Docker Whisper notice - falling back to cloud evaluation]:', whisperErr);
+      }
+    }
+
     try {
       // 1. Determine expectedText, aiReplyText, difficulty, history per VIAA-GOT PART 2
       const expectedText = currentExpectedTurn ? currentExpectedTurn.text : '';
@@ -439,38 +506,102 @@ export default function App() {
         text: m.text,
       }));
 
-      // 2. Single POST /api/evaluate-speech (inline TTS included)
-      console.time('Gemini evaluate');
+      // 2. Evaluation pipeline: Direct client Docker Offline if active, or POST /api/evaluate-speech
+      console.time('Speech evaluation');
       const evalStart = Date.now();
-      const evalResponse = await fetch('/api/evaluate-speech', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audio: audioBase64 || '',
-          mimeType: mimeType || 'audio/webm',
-          typedText: trimmedSpoken,
-          history,
-          expectedText,
-          aiReplyText,
-          aiSpeaker: aiRole,
-          difficulty,
-          practiceMode,
-          scenarioTitle: selectedScenario.title,
-          userRole: studentRole,
-          voiceEnabled,
-          maxOutputTokens: 650,
-          currentPairIndex,
-          studentLevel,
-          localAiConfig: audioBase64 ? undefined : localAiConfig,
-        }),
-      });
 
-      evalLatencyMs = Date.now() - evalStart;
-      console.timeEnd('Gemini evaluate');
-
-      if (evalResponse.ok) {
-        evaluation = await evalResponse.json();
+      // Attempt direct client-side evaluation with LocalAI / Open WebUI container if enabled
+      if (activeSpoken && localAiConfig.enabled && (localAiConfig.provider === 'docker' || localAiConfig.provider === 'openwebui' || localAiConfig.dockerOfflineEnabled)) {
+        try {
+          const evalEndpoint = localAiConfig.provider === 'openwebui'
+            ? (localAiConfig.openWebUiEndpoint || (localAiConfig.lanHostIp ? `http://${localAiConfig.lanHostIp}:8090/api` : 'http://172.30.115.239:8090/api'))
+            : (localAiConfig.endpoint || 'http://localhost:8081/v1');
+          const evalModel = localAiConfig.provider === 'openwebui'
+            ? (localAiConfig.model || 'open-webui')
+            : localAiConfig.model;
+          const localResult = await evaluateWithLocalDocker(
+            activeSpoken,
+            expectedText,
+            difficulty as any,
+            evalEndpoint,
+            evalModel,
+            localAiConfig.apiKey
+          );
+          if (localResult && typeof localResult.overallScore === 'number') {
+            const passingThreshold = getPassingThreshold(studentLevel);
+            const overallScore = Math.max(0, Math.min(100, Math.round(localResult.overallScore)));
+            const isPassed = overallScore >= passingThreshold;
+            evaluation = {
+              overallScore,
+              pronunciationScore: Math.max(0, Math.min(100, Math.round(localResult.pronunciationScore ?? overallScore))),
+              phraseologyScore: Math.max(0, Math.min(100, Math.round(localResult.phraseologyScore ?? overallScore))),
+              grammarScore: overallScore,
+              vocabularyScore: overallScore,
+              templateScore: overallScore,
+              grade: overallScore >= passingThreshold + 25 ? 'good' : isPassed ? 'passed' : 'not_passed',
+              isPassed,
+              requiresRetry: !isPassed,
+              transcribedText: activeSpoken,
+              understoodAs: expectedText || activeSpoken,
+              mispronouncedWords: Array.isArray(localResult.mispronouncedWords) ? localResult.mispronouncedWords : [],
+              strengths: isPassed ? ['Khẩu lệnh đạt chuẩn'] : ['Đã tiếp nhận'],
+              improvements: !isPassed ? [`Điểm dưới ${passingThreshold}%`] : [],
+              rubricLevel: isPassed ? 'Đạt' : 'Chưa đạt',
+              feedbackSummary: localResult.feedbackSummary || (isPassed ? 'Khẩu lệnh đạt chuẩn.' : 'Chưa đạt chuẩn.'),
+              assistantReply: aiReplyText || localResult.assistantReply || 'Roger.',
+              modelUsed: `${evalModel || 'Local'} (${localAiConfig.provider === 'openwebui' ? 'Open WebUI WiFi' : 'Docker Offline'})`,
+            };
+            evalLatencyMs = Date.now() - evalStart;
+          }
+        } catch {
+          // Smooth fallback to backend Gemini evaluation
+        }
       }
+
+      // If not evaluated locally, request evaluation from /api/evaluate-speech
+      if (!evaluation) {
+        // Do not send localhost or private LAN endpoint to remote cloud server to prevent ECONNREFUSED/timeout
+        const isLocalhostEndpoint = localAiConfig.endpoint && (
+          localAiConfig.endpoint.includes('localhost') ||
+          localAiConfig.endpoint.includes('127.0.0.1') ||
+          localAiConfig.endpoint.includes('172.') ||
+          localAiConfig.endpoint.includes('192.168.') ||
+          localAiConfig.endpoint.includes('10.')
+        );
+        const serverLocalAiConfig = (localAiConfig.enabled && !isLocalhostEndpoint && !audioBase64)
+          ? localAiConfig
+          : undefined;
+
+        const evalResponse = await fetch('/api/evaluate-speech', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            audio: activeSpoken ? '' : (audioBase64 || ''),
+            mimeType: mimeType || 'audio/webm',
+            typedText: activeSpoken,
+            history,
+            expectedText,
+            aiReplyText,
+            aiSpeaker: aiRole,
+            difficulty,
+            practiceMode,
+            scenarioTitle: selectedScenario.title,
+            userRole: studentRole,
+            voiceEnabled,
+            maxOutputTokens: 650,
+            currentPairIndex,
+            studentLevel,
+            localAiConfig: serverLocalAiConfig,
+          }),
+        });
+
+        evalLatencyMs = Date.now() - evalStart;
+
+        if (evalResponse.ok) {
+          evaluation = await evalResponse.json();
+        }
+      }
+      console.timeEnd('Speech evaluation');
 
       if (evaluation) {
         if (evaluation.transcribedText) {
@@ -524,6 +655,13 @@ export default function App() {
     if (!passedThisTurn) {
       // Failed: require retry of the current turn
       setPendingRetryTurn(true);
+      const newRetryCount = turnRetryCount + 1;
+      setTurnRetryCount(newRetryCount);
+
+      if (practiceMode === 'exam' && newRetryCount >= 2) {
+        setIsExamSkipModalOpen(true);
+        return;
+      }
 
       // Speak repeat prompt if assistantReply is provided
       if (evaluation?.assistantReply) {
@@ -545,6 +683,7 @@ export default function App() {
 
     // Passed turn! Clear retry flag and continue
     setPendingRetryTurn(false);
+    setTurnRetryCount(0);
 
     // Scenario / Exam Mode handling
     if (practiceMode === 'scenario' || practiceMode === 'exam') {
@@ -763,6 +902,10 @@ export default function App() {
               setIsInstructorIntroOpen(true);
               setIsMenuOpen(false);
             }}
+            onOpenReport={() => {
+              setIsReportModalOpen(true);
+              setIsMenuOpen(false);
+            }}
             activeTab={activeNavTab}
             setActiveTab={setActiveNavTab}
             currentUser={currentUser}
@@ -792,6 +935,7 @@ export default function App() {
             onToggleDetailedEvaluation={() => setShowDetailedEvaluation((prev) => !prev)}
             localAiConfig={localAiConfig}
             onUpdateLocalAiConfig={(cfg) => setLocalAiConfig(cfg)}
+            onOpenReport={() => setIsReportModalOpen(true)}
           />
 
           {/* Auto-Detect AI Engine Notification Banner */}
@@ -972,6 +1116,64 @@ export default function App() {
         currentStudentLevel={studentLevel}
         currentUserRole={userRole}
       />
+
+      <ReportModal
+        isOpen={isReportModalOpen}
+        onClose={() => setIsReportModalOpen(false)}
+        selectedScenario={selectedScenario}
+        practiceMode={practiceMode}
+        studentLevel={studentLevel}
+        userRole={userRole}
+        messages={messages}
+        currentUser={currentUser}
+      />
+
+      {/* Exam Mode 2-Attempt Skip/Retry Modal */}
+      {isExamSkipModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-lg">
+                ⚠️
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Bài Kiểm Tra Quá Trình (Exam Mode)</h3>
+                <p className="text-xs text-slate-500">Cặp câu #{currentPairIndex} chưa đạt sau 2 lần thử</p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-700 leading-relaxed">
+              Hệ thống ghi nhận bạn đã lặp lại 2 lần nhưng chưa đạt tiêu chuẩn. Bạn muốn tiếp tục thử lại lần nữa hay chuyển sang câu hỏi tiếp theo để hoàn thành đủ 10 cặp phản hồi?
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsExamSkipModalOpen(false);
+                  setTurnRetryCount(0);
+                }}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+              >
+                Thử lại lần nữa
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsExamSkipModalOpen(false);
+                  setTurnRetryCount(0);
+                  if (currentPairIndex < selectedScenario.dialoguePairs.length) {
+                    advanceToNextPair(currentPairIndex + 1);
+                  } else {
+                    setIsSummaryModalOpen(true);
+                  }
+                }}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer shadow-sm"
+              >
+                Chuyển câu tiếp theo ➔
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Floating Debug Inspector Panel (Ctrl+Shift+D) */}
       {isDebugOpen && (

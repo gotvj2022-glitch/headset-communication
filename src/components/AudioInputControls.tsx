@@ -65,6 +65,18 @@ export const AudioInputControls: React.FC<AudioInputControlsProps> = ({
       setRecordSeconds(0);
       isRecordingRef.current = true;
 
+      // Check if getUserMedia is supported in the current environment
+      if (!navigator?.mediaDevices?.getUserMedia) {
+        setHasMicPermission(false);
+        setIsRecording(false);
+        isRecordingRef.current = false;
+        setAudioWarning('Trình duyệt hiện tại không hỗ trợ Web Audio/Microphone API. Bạn có thể gõ khẩu lệnh trực tiếp vào ô bên dưới.');
+        if (!textInput && expectedText) {
+          setTextInput(expectedText);
+        }
+        return;
+      }
+
       // 2. Start recording exactly per VIAA-GOT spec: no extra constraints
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       setHasMicPermission(true);
@@ -94,7 +106,7 @@ export const AudioInputControls: React.FC<AudioInputControlsProps> = ({
           updateLevel();
         }
       } catch (audioCtxErr) {
-        console.warn('AudioContext visualization setup error:', audioCtxErr);
+        console.warn('AudioContext visualization setup notice:', audioCtxErr);
       }
 
       let mime = '';
@@ -117,12 +129,33 @@ export const AudioInputControls: React.FC<AudioInputControlsProps> = ({
       timerRef.current = setInterval(() => {
         setRecordSeconds((s) => s + 1);
       }, 1000);
-    } catch (err) {
-      console.error('Error starting audio recording:', err);
+    } catch (err: any) {
+      console.warn('[AudioInputControls] Microphone initialization notice:', err?.name || 'Error', err?.message || err);
       setHasMicPermission(false);
       setIsRecording(false);
       isRecordingRef.current = false;
-      setAudioWarning('Microphone access denied. Please grant microphone permission in your browser.');
+
+      const isNotFound =
+        err?.name === 'NotFoundError' ||
+        err?.name === 'DevicesNotFoundError' ||
+        (err?.message && /device not found|notfounderror/i.test(err.message));
+      const isNotAllowed =
+        err?.name === 'NotAllowedError' ||
+        err?.name === 'PermissionDeniedError' ||
+        (err?.message && /permission/i.test(err.message));
+
+      if (isNotFound) {
+        setAudioWarning('Không tìm thấy thiết bị Microphone trên máy tính. Bạn có thể cắm tai nghe/micro hoặc gõ khẩu lệnh trực tiếp vào ô bên dưới để tiếp tục.');
+      } else if (isNotAllowed) {
+        setAudioWarning('Trình duyệt chưa được cấp quyền truy cập Microphone. Vui lòng bật quyền micro trong cài đặt trình duyệt hoặc gõ khẩu lệnh bên dưới.');
+      } else {
+        setAudioWarning('Không thể kích hoạt Microphone. Bạn có thể gõ khẩu lệnh trực tiếp vào ô bên dưới để phát tín hiệu.');
+      }
+
+      // Auto-populate expectedText into input so the user can easily proceed by typing or clicking Send
+      if (!textInput && expectedText) {
+        setTextInput(expectedText);
+      }
     }
   };
 
@@ -207,21 +240,41 @@ export const AudioInputControls: React.FC<AudioInputControlsProps> = ({
   return (
     <div className="shrink-0 bg-white border-t border-slate-200 p-3 sm:p-4 shadow-sm">
       <div className="max-w-4xl mx-auto flex flex-col gap-2.5">
-        {/* Permission warning */}
-        {hasMicPermission === false && (
-          <div className="flex items-center gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
-            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-            <span>
-              Microphone chưa được cấp quyền trong trình duyệt. Bạn có thể gõ nội dung hoặc nhấn vào câu gợi ý bên trên để gửi nhanh.
-            </span>
+        {/* Permission / Hardware warning */}
+        {hasMicPermission === false && !audioWarning && (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>Microphone không khả dụng hoặc chưa cấp quyền. Bạn có thể gõ khẩu lệnh trực tiếp vào ô bên dưới.</span>
+            </div>
+            {expectedText && (
+              <button
+                type="button"
+                onClick={() => setTextInput(expectedText)}
+                className="self-start sm:self-auto px-2.5 py-1 bg-amber-200/80 hover:bg-amber-300 rounded font-semibold text-amber-900 text-[11px] transition-colors shrink-0 cursor-pointer"
+              >
+                Gõ câu mẫu chuẩn
+              </button>
+            )}
           </div>
         )}
 
         {/* Audio Size / Recording Warning */}
         {audioWarning && (
-          <div className="flex items-center gap-2 p-2.5 rounded-lg bg-red-100 border border-red-300 text-xs text-red-800 animate-fadeIn">
-            <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
-            <span className="font-semibold">{audioWarning}</span>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-300 text-xs text-amber-900 animate-fadeIn">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span className="font-medium">{audioWarning}</span>
+            </div>
+            {expectedText && (
+              <button
+                type="button"
+                onClick={() => setTextInput(expectedText)}
+                className="self-start sm:self-auto px-2.5 py-1 bg-amber-200/80 hover:bg-amber-300 rounded font-semibold text-amber-900 text-[11px] transition-colors shrink-0 cursor-pointer"
+              >
+                Gõ câu mẫu chuẩn
+              </button>
+            )}
           </div>
         )}
 

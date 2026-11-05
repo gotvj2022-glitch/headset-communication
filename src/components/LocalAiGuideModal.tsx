@@ -12,7 +12,10 @@ import {
   Code,
   Sparkles,
   Layers,
-  ArrowRight
+  ArrowRight,
+  Wifi,
+  Globe,
+  Radio
 } from 'lucide-react';
 import { LocalAiConfig } from '../types';
 
@@ -29,7 +32,7 @@ export const LocalAiGuideModal: React.FC<LocalAiGuideModalProps> = ({
   currentConfig,
   onApplyConfig,
 }) => {
-  const [activeTab, setActiveTab] = useState<'lmstudio' | 'ollama' | 'vllm'>('lmstudio');
+  const [activeTab, setActiveTab] = useState<'openwebui' | 'docker' | 'lmstudio' | 'ollama' | 'vllm'>('openwebui');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   if (!isOpen) return null;
@@ -40,34 +43,67 @@ export const LocalAiGuideModal: React.FC<LocalAiGuideModalProps> = ({
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
-  const handleApplyPreset = (tab: 'lmstudio' | 'ollama' | 'vllm') => {
+  const handleApplyPreset = (tab: 'openwebui' | 'docker' | 'lmstudio' | 'ollama' | 'vllm') => {
     if (!onApplyConfig) return;
-    if (tab === 'lmstudio') {
+    if (tab === 'openwebui') {
+      onApplyConfig({
+        enabled: true,
+        provider: 'openwebui',
+        endpoint: 'http://172.30.115.239:8090/api',
+        model: 'google/gemma-4-e4b',
+        apiKey: currentConfig?.apiKey || '',
+        temperature: 0.1,
+        dockerOfflineEnabled: true,
+        whisperEndpoint: 'http://172.30.115.239:8000/v1',
+        whisperModel: 'Systran/faster-whisper-small',
+        localAiTtsEndpoint: 'http://172.30.115.239:8081/v1',
+        localAiTtsVoice: 'en-us-male',
+        lanHostIp: '172.30.115.239',
+      });
+    } else if (tab === 'docker') {
+      onApplyConfig({
+        enabled: true,
+        provider: 'docker',
+        endpoint: 'http://172.30.115.239:8081/v1',
+        model: 'localai',
+        apiKey: '',
+        temperature: 0.1,
+        dockerOfflineEnabled: true,
+        whisperEndpoint: 'http://172.30.115.239:8000/v1',
+        whisperModel: 'Systran/faster-whisper-small',
+        localAiTtsEndpoint: 'http://172.30.115.239:8081/v1',
+        localAiTtsVoice: 'en-us-male',
+        lanHostIp: '172.30.115.239',
+      });
+    } else if (tab === 'lmstudio') {
       onApplyConfig({
         enabled: true,
         provider: 'lmstudio',
-        endpoint: 'http://localhost:1234/v1',
+        endpoint: 'http://172.30.115.239:1234/v1',
         model: 'google/gemma-4-e4b',
         apiKey: '',
         temperature: 0.1,
+        dockerOfflineEnabled: false,
       });
     } else if (tab === 'ollama') {
       onApplyConfig({
         enabled: true,
         provider: 'ollama',
-        endpoint: 'http://localhost:11434/v1',
+        endpoint: 'http://172.30.115.239:11434/v1',
         model: 'qwen3.8:27b',
         apiKey: '',
         temperature: 0.1,
+        dockerOfflineEnabled: false,
       });
     } else {
       onApplyConfig({
         enabled: true,
         provider: 'vllm',
-        endpoint: 'http://localhost:8000/v1',
+        endpoint: 'http://172.30.115.239:8000/v1',
         model: 'Qwen/Qwen2.5-3B-Instruct',
         apiKey: '',
         temperature: 0.1,
+        dockerOfflineEnabled: false,
       });
     }
     onClose();
@@ -110,6 +146,35 @@ export const LocalAiGuideModal: React.FC<LocalAiGuideModalProps> = ({
         <div className="px-6 pt-3 pb-2 border-b border-slate-100 bg-slate-50 flex items-center gap-2 overflow-x-auto shrink-0">
           <button
             type="button"
+            onClick={() => setActiveTab('openwebui')}
+            className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
+              activeTab === 'openwebui'
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'bg-white hover:bg-slate-200/70 text-slate-700 border border-slate-200'
+            }`}
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-300 animate-pulse"></span>
+            <Globe className="w-4 h-4" />
+            <span>Open WebUI (Máy Chủ WiFi)</span>
+            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-black/10">172.30.115.239:8090</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('docker')}
+            className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
+              activeTab === 'docker'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'bg-white hover:bg-slate-200/70 text-slate-700 border border-slate-200'
+            }`}
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span>🐳 Docker Offline Suite</span>
+            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-black/10">Port 8000 & 8081</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab('lmstudio')}
             className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
               activeTab === 'lmstudio'
@@ -117,8 +182,8 @@ export const LocalAiGuideModal: React.FC<LocalAiGuideModalProps> = ({
                 : 'bg-white hover:bg-slate-200/70 text-slate-700 border border-slate-200'
             }`}
           >
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span>1. LM Studio (Gemma / Qwen)</span>
+            <Cpu className="w-4 h-4 text-emerald-500" />
+            <span>LM Studio</span>
             <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-black/10">Port 1234</span>
           </button>
 
@@ -132,7 +197,7 @@ export const LocalAiGuideModal: React.FC<LocalAiGuideModalProps> = ({
             }`}
           >
             <Cpu className="w-4 h-4 text-amber-500" />
-            <span>2. Ollama (CLI / Docker)</span>
+            <span>Ollama</span>
             <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-black/10">Port 11434</span>
           </button>
 
@@ -146,7 +211,7 @@ export const LocalAiGuideModal: React.FC<LocalAiGuideModalProps> = ({
             }`}
           >
             <Zap className="w-4 h-4 text-emerald-500" />
-            <span>3. vLLM / Custom Server</span>
+            <span>vLLM</span>
             <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-black/10">Port 8000</span>
           </button>
         </div>
@@ -155,29 +220,268 @@ export const LocalAiGuideModal: React.FC<LocalAiGuideModalProps> = ({
         <div className="p-5 sm:p-6 space-y-5 overflow-y-auto flex-1 text-xs sm:text-sm">
           
           {/* Active Quick Apply Banner */}
-          <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-50 via-red-50 to-amber-50 border border-amber-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+          <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-50 via-blue-50 to-amber-50 border border-emerald-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-xs">
+              <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
                 <Sparkles className="w-4 h-4" />
               </div>
               <div>
                 <h4 className="font-bold text-slate-900 text-xs sm:text-sm">
-                  Cài đặt nhanh 1 chạm cho {activeTab === 'lmstudio' ? 'LM Studio' : activeTab === 'ollama' ? 'Ollama' : 'vLLM'}
+                  Cài đặt nhanh 1 chạm cho {activeTab === 'openwebui' ? 'Open WebUI (Máy Chủ WiFi 172.30.115.239:8090)' : activeTab === 'docker' ? 'Docker Offline Suite (Whisper :8000 + LocalAI :8081)' : activeTab === 'lmstudio' ? 'LM Studio' : activeTab === 'ollama' ? 'Ollama' : 'vLLM'}
                 </h4>
                 <p className="text-[11px] text-slate-600">
-                  Tự động điền đầy đủ URL Endpoint, tên mô hình và lưu vào giao diện đàm thoại.
+                  {activeTab === 'openwebui'
+                    ? 'Kết nối máy học viên trên cùng mạng WiFi với Open WebUI (cổng 8090), Faster-Whisper (8000) và LocalAI (8081) trên máy chủ 172.30.115.239.'
+                    : activeTab === 'docker'
+                    ? 'Tự động kích hoạt Faster-Whisper (:8000) nhận diện giọng nói và LocalAI (:8081) chấm điểm & phát âm thanh 100% Offline.'
+                    : 'Tự động điền đầy đủ URL Endpoint, tên mô hình và lưu vào giao diện đàm thoại.'}
                 </p>
               </div>
             </div>
             <button
               type="button"
               onClick={() => handleApplyPreset(activeTab)}
-              className="px-4 py-2 bg-gradient-to-r from-red-600 to-amber-600 hover:from-red-700 hover:to-amber-700 text-white font-bold rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer active:scale-95 text-xs"
+              className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-bold rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer active:scale-95 text-xs"
             >
               <span>Áp Dụng Cấu Hình Ngay</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
+
+          {/* TAB: OPEN WEBUI ON WIFI LAN */}
+          {activeTab === 'openwebui' && (
+            <div className="space-y-4 animate-fadeIn">
+              {/* Server Network Info Banner */}
+              <div className="bg-slate-900 text-white rounded-2xl p-4 sm:p-5 space-y-3 border border-slate-700 shadow-md">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span className="font-bold text-slate-200 text-xs sm:text-sm">Máy Chủ Đào Tạo WiFi (172.30.115.239)</span>
+                  </div>
+                  <span className="text-[10px] font-mono bg-emerald-900/60 text-emerald-300 px-2 py-0.5 rounded border border-emerald-700/50">
+                    Mạng Nội Bộ WiFi / LAN
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs font-mono">
+                  <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700 space-y-1">
+                    <div className="flex items-center justify-between text-emerald-400 font-bold">
+                      <span>🌐 Open WebUI</span>
+                      <span className="text-[10px] bg-emerald-950 text-emerald-300 px-1.5 py-0.2 rounded">Port 8090</span>
+                    </div>
+                    <div className="text-[11px] text-slate-300">ghcr.io/open-webui/open-webui:main</div>
+                    <div className="text-[10px] text-slate-400 font-sans">OpenAI-compatible LLM Chat API</div>
+                  </div>
+
+                  <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700 space-y-1">
+                    <div className="flex items-center justify-between text-blue-400 font-bold">
+                      <span>🎤 faster-whisper</span>
+                      <span className="text-[10px] bg-blue-950 text-blue-300 px-1.5 py-0.2 rounded">Port 8000</span>
+                    </div>
+                    <div className="text-[11px] text-slate-300">faster-whisper-server:cpu</div>
+                    <div className="text-[10px] text-slate-400 font-sans">STT nhận dạng giọng học viên &lt; 300ms</div>
+                  </div>
+
+                  <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700 space-y-1">
+                    <div className="flex items-center justify-between text-amber-400 font-bold">
+                      <span>🔊 localai-tts</span>
+                      <span className="text-[10px] bg-amber-950 text-amber-300 px-1.5 py-0.2 rounded">Port 8081</span>
+                    </div>
+                    <div className="text-[11px] text-slate-300">localai:latest-aio-cpu</div>
+                    <div className="text-[10px] text-slate-400 font-sans">Giọng đọc kiểm soát viên & chấm điểm</div>
+                  </div>
+                </div>
+
+                <div className="bg-slate-950/70 p-2.5 rounded-xl border border-slate-800 text-[11px] font-mono text-slate-300 flex flex-wrap items-center gap-x-4 gap-y-1">
+                  <span>IPv4: <strong className="text-emerald-400">172.30.115.239</strong></span>
+                  <span>Subnet: <strong className="text-slate-200">255.255.0.0</strong></span>
+                  <span>Gateway: <strong className="text-slate-200">172.30.119.1</strong></span>
+                </div>
+              </div>
+
+              {/* Service 1: Open WebUI */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-700 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                    <span className="w-5 h-5 rounded-md bg-emerald-600 text-white flex items-center justify-center text-xs">1</span>
+                    Open WebUI Endpoint (Cổng 8090):
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard('http://172.30.115.239:8090/api', 'openwebui_url')}
+                    className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 flex items-center gap-1 cursor-pointer"
+                  >
+                    {copiedKey === 'openwebui_url' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedKey === 'openwebui_url' ? 'Đã copy!' : 'Sao chép'}</span>
+                  </button>
+                </div>
+                <div className="bg-white border border-slate-300 rounded-xl px-3.5 py-2 font-mono text-xs text-emerald-700 font-bold select-all flex items-center justify-between">
+                  <span>http://172.30.115.239:8090/api</span>
+                  <span className="text-[10px] text-slate-400 font-sans font-normal">/chat/completions (OpenAI Compatible)</span>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  • Học viên trên laptop mở trình duyệt vào <code className="text-emerald-700 font-bold">http://172.30.115.239:8090</code> để kiểm tra kết nối web Open WebUI.
+                  <br />• Nếu Open WebUI bật yêu cầu đăng nhập: vào <strong>Settings → Account → API Keys</strong> để tạo key và dán vào ô <em>API Key</em> của ứng dụng.
+                </p>
+              </div>
+
+              {/* Service 2: Faster Whisper */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-700 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                    <span className="w-5 h-5 rounded-md bg-blue-600 text-white flex items-center justify-center text-xs">2</span>
+                    Faster-Whisper STT Server Trên Máy Chủ (Cổng 8000):
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard('http://172.30.115.239:8000/v1', 'whisper_lan_url')}
+                    className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1 cursor-pointer"
+                  >
+                    {copiedKey === 'whisper_lan_url' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedKey === 'whisper_lan_url' ? 'Đã copy!' : 'Sao chép'}</span>
+                  </button>
+                </div>
+                <div className="bg-white border border-slate-300 rounded-xl px-3.5 py-2 font-mono text-xs text-blue-700 font-bold select-all flex items-center justify-between">
+                  <span>http://172.30.115.239:8000/v1</span>
+                  <span className="text-[10px] text-slate-400 font-sans font-normal">/audio/transcriptions</span>
+                </div>
+              </div>
+
+              {/* Service 3: LocalAI TTS */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-700 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                    <span className="w-5 h-5 rounded-md bg-amber-600 text-white flex items-center justify-center text-xs">3</span>
+                    LocalAI TTS & Audio Trên Máy Chủ (Cổng 8081):
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard('http://172.30.115.239:8081/v1', 'localai_lan_url')}
+                    className="text-xs font-semibold text-amber-600 hover:text-amber-700 flex items-center gap-1 cursor-pointer"
+                  >
+                    {copiedKey === 'localai_lan_url' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedKey === 'localai_lan_url' ? 'Đã copy!' : 'Sao chép'}</span>
+                  </button>
+                </div>
+                <div className="bg-white border border-slate-300 rounded-xl px-3.5 py-2 font-mono text-xs text-amber-700 font-bold select-all flex items-center justify-between">
+                  <span>http://172.30.115.239:8081/v1</span>
+                  <span className="text-[10px] text-slate-400 font-sans font-normal">/audio/speech</span>
+                </div>
+              </div>
+
+              {/* Firewall instructions */}
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-amber-900 font-bold text-xs uppercase tracking-wider">
+                    <AlertTriangle className="w-4 h-4 text-amber-600" />
+                    <span>Lưu ý Tường Lửa (Windows Firewall) Trên Máy Chủ:</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard('New-NetFirewallRule -DisplayName "OpenWebUI-LocalAI" -Direction Inbound -LocalPort 8090,8000,8081 -Protocol TCP -Action Allow', 'firewall_cmd')}
+                    className="text-xs font-semibold text-amber-800 hover:text-amber-900 flex items-center gap-1 cursor-pointer"
+                  >
+                    {copiedKey === 'firewall_cmd' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedKey === 'firewall_cmd' ? 'Đã copy!' : 'Sao chép lệnh'}</span>
+                  </button>
+                </div>
+                <p className="text-[11px] text-amber-800 leading-relaxed">
+                  Nếu các máy laptop kết nối chung WiFi nhưng không mở được <code>http://172.30.115.239:8090</code>, hãy mở <strong>PowerShell với quyền Administrator</strong> trên máy chủ <code>172.30.115.239</code> và dán lệnh sau để cho phép thông các cổng:
+                </p>
+                <pre className="bg-slate-900 text-emerald-400 p-2.5 rounded-xl font-mono text-[11px] overflow-x-auto select-all">
+                  New-NetFirewallRule -DisplayName "OpenWebUI-LocalAI" -Direction Inbound -LocalPort 8090,8000,8081 -Protocol TCP -Action Allow
+                </pre>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 0: DOCKER OFFLINE SUITE */}
+          {activeTab === 'docker' && (
+            <div className="space-y-4 animate-fadeIn">
+              {/* Docker Containers Card */}
+              <div className="bg-slate-900 text-white rounded-2xl p-4 sm:p-5 space-y-3 border border-slate-700 shadow-md">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span className="font-bold text-slate-200 text-xs sm:text-sm">Trạng Thái Docker Containers Trên Máy Chủ</span>
+                  </div>
+                  <span className="text-[10px] font-mono bg-blue-900/60 text-blue-300 px-2 py-0.5 rounded border border-blue-700/50">
+                    Host: localhost
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs font-mono">
+                  <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700 space-y-1">
+                    <div className="flex items-center justify-between text-emerald-400 font-bold">
+                      <span>🎤 faster-whisper</span>
+                      <span className="text-[10px] bg-emerald-950 text-emerald-300 px-1.5 py-0.2 rounded">8000:8000</span>
+                    </div>
+                    <div className="text-[11px] text-slate-300">fedirz/faster-whisper-server:latest-cpu</div>
+                    <div className="text-[10px] text-slate-400 font-sans">Nhận diện giọng nói siêu tốc &lt; 300ms</div>
+                  </div>
+
+                  <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700 space-y-1">
+                    <div className="flex items-center justify-between text-amber-400 font-bold">
+                      <span>🔊 localai-tts</span>
+                      <span className="text-[10px] bg-amber-950 text-amber-300 px-1.5 py-0.2 rounded">8081:8080</span>
+                    </div>
+                    <div className="text-[11px] text-slate-300">localai/localai:latest-aio-cpu</div>
+                    <div className="text-[10px] text-slate-400 font-sans">Tạo giọng nói AI & Chấm điểm ICAO</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Service 1: Faster-Whisper */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-700 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                    <span className="w-5 h-5 rounded-md bg-blue-600 text-white flex items-center justify-center text-xs">1</span>
+                    Faster-Whisper STT Endpoint (Cổng 8000):
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard('http://localhost:8000/v1', 'whisper_url')}
+                    className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1 cursor-pointer"
+                  >
+                    {copiedKey === 'whisper_url' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedKey === 'whisper_url' ? 'Đã copy!' : 'Sao chép'}</span>
+                  </button>
+                </div>
+                <div className="bg-white border border-slate-300 rounded-xl px-3.5 py-2 font-mono text-xs text-blue-700 font-bold select-all flex items-center justify-between">
+                  <span>http://localhost:8000/v1</span>
+                  <span className="text-[10px] text-slate-400 font-sans font-normal">/audio/transcriptions</span>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  • Nhận trực tiếp luồng microphone học viên, chuyển thể thành văn bản trong vài trăm mili-giây không cần qua internet.
+                </p>
+              </div>
+
+              {/* Service 2: LocalAI */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-700 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                    <span className="w-5 h-5 rounded-md bg-blue-600 text-white flex items-center justify-center text-xs">2</span>
+                    LocalAI TTS & LLM Endpoint (Cổng 8081):
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard('http://localhost:8081/v1', 'localai_url')}
+                    className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1 cursor-pointer"
+                  >
+                    {copiedKey === 'localai_url' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedKey === 'localai_url' ? 'Đã copy!' : 'Sao chép'}</span>
+                  </button>
+                </div>
+                <div className="bg-white border border-slate-300 rounded-xl px-3.5 py-2 font-mono text-xs text-amber-700 font-bold select-all flex items-center justify-between">
+                  <span>http://localhost:8081/v1</span>
+                  <span className="text-[10px] text-slate-400 font-sans font-normal">/audio/speech & /chat/completions</span>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  • Phát âm thanh đáp từ phi công / thợ máy và chấm điểm khẩu lệnh tiêu chuẩn ICAO.
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* TAB 1: LM STUDIO */}
           {activeTab === 'lmstudio' && (
